@@ -10,8 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: sync-api
@@ -21,14 +20,25 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Require FABPLANE_CLI_SYNC_TOKEN
+      - name: Require GitHub App credentials
         env:
-          FABPLANE_CLI_SYNC_TOKEN: ${{ secrets.FABPLANE_CLI_SYNC_TOKEN }}
+          FABPLANE_CLI_SYNC_APP_ID: ${{ vars.FABPLANE_CLI_SYNC_APP_ID }}
+          FABPLANE_CLI_SYNC_APP_PRIVATE_KEY: ${{ secrets.FABPLANE_CLI_SYNC_APP_PRIVATE_KEY }}
         run: |
-          if [ -z "$FABPLANE_CLI_SYNC_TOKEN" ]; then
-            echo "::error title=FABPLANE_CLI_SYNC_TOKEN missing::Please add the FABPLANE_CLI_SYNC_TOKEN repository secret (fine-grained PAT: contents + pull-requests write on fabPlane/fabplane-cli). See the README's 'API spec sync' section."
+          if [ -z "$FABPLANE_CLI_SYNC_APP_ID" ] || [ -z "$FABPLANE_CLI_SYNC_APP_PRIVATE_KEY" ]; then
+            echo "::error title=GitHub App credentials missing::Set FABPLANE_CLI_SYNC_APP_ID (variable) and FABPLANE_CLI_SYNC_APP_PRIVATE_KEY (secret). See the README's 'API spec sync' section."
             exit 1
           fi
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.FABPLANE_CLI_SYNC_APP_ID }}
+          private-key: ${{ secrets.FABPLANE_CLI_SYNC_APP_PRIVATE_KEY }}
+          owner: fabPlane
+          repositories: fabplane-cli
+          permission-contents: write
+          permission-pull-requests: write
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -49,7 +59,7 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
-          token: ${{ secrets.FABPLANE_CLI_SYNC_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           branch: chore/api-sync
           delete-branch: true
           commit-message: "chore: sync fabplane API spec"
