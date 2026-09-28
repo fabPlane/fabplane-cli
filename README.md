@@ -17,10 +17,12 @@ npm i -g fabplane-cli     # installs the `fabplane` command
 npx fabplane-cli help     # or run it without installing
 ```
 
-Until the first npm release, install from GitHub:
+Until the first npm release, build it from source (`npm i -g github:fabPlane/fabplane-cli` does
+not work: npm's global git install never has TypeScript available for the build):
 
 ```sh
-npm i -g github:fabPlane/fabplane-cli
+git clone https://github.com/fabPlane/fabplane-cli && cd fabplane-cli
+npm ci && npm pack && npm i -g ./fabplane-cli-*.tgz
 ```
 
 Node.js 20 or newer is required.
@@ -294,7 +296,7 @@ that has not been added yet:
    `v*` tag (e.g. `v0.1.1`). The workflow builds, tests and runs `npm publish --provenance`.
 
 Without the secret the workflow fails on its first step with an error asking for it, and publishes
-nothing. Until then, install from GitHub: `npm i -g github:fabPlane/fabplane-cli`.
+nothing. Until the first release, install from source as described under Install.
 
 ## License
 
