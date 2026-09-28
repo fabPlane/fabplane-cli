@@ -3216,7 +3216,7 @@
       "Me": {
         "type": "object",
         "properties": {
-          "user": {
+          "principal": {
             "type": [
               "object",
               "null"
@@ -3232,23 +3232,26 @@
                 "type": "string"
               },
               "email": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "emailVerified": {
-                "type": "boolean"
-              },
-              "personalOrgId": {
-                "type": "string",
-                "format": "uuid"
+                "type": "string"
               }
             }
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emailVerified": {
+            "type": "boolean"
+          },
+          "personalOrgId": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
-          "user"
+          "principal"
         ]
       },
       "ApiToken": {

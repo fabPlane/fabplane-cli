@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { FabplaneApiError, FabplaneClient } from "../src/index.js";
+import { FabplaneApiError, FabplaneClient, meUser } from "../src/index.js";
 
 type Call = { url: string; method: string; headers: Record<string, string>; body: unknown; rawBody: unknown };
 
@@ -247,5 +247,13 @@ describe("device flow", () => {
     const { calls, fetch } = recorder();
     await assert.rejects(new FabplaneClient({ fetch }).loginWithPassword({ email: "a", password: "b" }), /not available on production/);
     assert.equal(calls.length, 0);
+  });
+});
+
+describe("meUser", () => {
+  it("flattens the current and the older getMe shapes", () => {
+    assert.deepEqual(meUser({ principal: { subject: "s", handle: "maya" }, email: "m@x.test", emailVerified: true, personalOrgId: "o1" }), { subject: "s", handle: "maya", email: "m@x.test", emailVerified: true, personalOrgId: "o1" });
+    assert.deepEqual(meUser({ principal: null, user: { subject: "s", personalOrgId: "o2" } }), { subject: "s", personalOrgId: "o2" });
+    assert.equal(meUser({ principal: null }), null);
   });
 });

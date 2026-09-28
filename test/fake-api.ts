@@ -188,7 +188,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
     const myOrgs = () => state.memberships.filter((m) => m.userId === uid).map((m) => orgView(state.orgs.get(m.orgId)!));
 
     if (seg[0] === "me" && seg.length === 1) {
-      return send(res, 200, { user: { subject: user["subject"], handle: user["handle"], displayName: user["displayName"], email: user["email"], emailVerified: user["emailVerified"], personalOrgId: user["personalOrgId"] } });
+      return send(res, 200, { principal: { subject: user["subject"], handle: user["handle"], displayName: user["displayName"] }, email: user["email"], emailVerified: user["emailVerified"], personalOrgId: user["personalOrgId"] });
     }
     if (seg[0] === "settings") {
       if (method === "GET") return state.settings ? send(res, 200, state.settings) : err(res, 404, "not_found");

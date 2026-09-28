@@ -1,4 +1,4 @@
-export { FabplaneClient, DEFAULT_CLIENT_ID, DEVICE_GRANT_TYPE, type FabplaneClientOptions, type FetchLike } from "./client.js";
+export { FabplaneClient, meUser, DEFAULT_CLIENT_ID, DEVICE_GRANT_TYPE, type FabplaneClientOptions, type FetchLike } from "./client.js";
 export { FabplaneApiError, isFabplaneApiError } from "./errors.js";
 export { DEFAULT_API_ORIGIN, dashboardUrlFor, normalizeOrigin } from "./origin.js";
 export {

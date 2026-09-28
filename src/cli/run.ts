@@ -7,10 +7,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { extname, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { FabplaneClient, type FetchLike } from "../client.js";
+import { FabplaneClient, meUser, type FetchLike } from "../client.js";
 import {
   CredentialStore,
   findOrg,
+  looksLikeId,
   resolveAuth,
   resolveDefaultOrg,
   tokenKindOf,
@@ -249,25 +250,27 @@ const commands: Record<string, Command> = {
         expiresAt = res.expires_in > 0 ? new Date(Date.now() + res.expires_in * 1000).toISOString() : null;
       }
       const client = ctx.newClient(origin, token);
-      const me = await client.getMe().catch(async (err: unknown) => {
-        if (err instanceof FabplaneApiError && err.status === 404) return client.me();
-        throw err;
-      });
-      if (!me.user) throw new UsageError("The token was not accepted (no user). Check it and try again.");
+      const me = meUser(
+        await client.getMe().catch(async (err: unknown) => {
+          if (err instanceof FabplaneApiError && err.status === 404) return client.me();
+          throw err;
+        }),
+      );
+      if (!me) throw new UsageError("The token was not accepted (no user). Check it and try again.");
       const kind = tokenKindOf(token);
       await ctx.store.saveProfile(origin, {
         token,
         ...(kind ? { tokenKind: kind } : {}),
         expiresAt,
         user: def({
-          subject: me.user.subject,
-          handle: me.user.handle,
-          displayName: me.user.displayName,
-          email: me.user.email ?? undefined,
+          subject: me.subject,
+          handle: me.handle,
+          displayName: me.displayName,
+          email: me.email ?? undefined,
         }),
       });
-      const who = me.user.handle ?? me.user.email ?? me.user.subject;
-      ctx.print({ ok: true, origin, user: me.user, credentials: ctx.store.path }, () => `Logged in to ${origin} as ${who}.`);
+      const who = me.handle ?? me.email ?? me.subject;
+      ctx.print({ ok: true, origin, user: me, credentials: ctx.store.path }, () => `Logged in to ${origin} as ${who}.`);
     },
   },
 
@@ -299,8 +302,7 @@ const commands: Record<string, Command> = {
     async run(ctx) {
       const auth = await ctx.auth();
       const client = await ctx.client();
-      const me = await client.getMe();
-      const user = me.user;
+      const user = meUser(await client.getMe());
       ctx.print({ origin: auth.origin, tokenSource: auth.tokenSource, defaultOrgId: auth.orgId ?? user?.personalOrgId ?? null, user }, () =>
         keyValues([
           ["user", user ? (user.handle ?? user.subject) : "(none)"],
@@ -608,6 +610,17 @@ const commands: Record<string, Command> = {
       if (items.length === 0) throw new UsageError(`No items in ${file}`);
       const client = await ctx.client();
       const orgId = await ctx.orgId();
+      // Exported CSVs name destinations ("DigiKey"); the API wants ids.
+      if (items.some((i) => i.destinationId && !/^builtin:[a-z0-9_-]+$/.test(i.destinationId) && !looksLikeId(i.destinationId))) {
+        const { destinations } = await client.listDestinations(orgId);
+        for (const item of items) {
+          const want = item.destinationId?.trim().toLowerCase();
+          if (!want || /^builtin:/.test(want) || looksLikeId(want)) continue;
+          const d = destinations.find((x) => x.name.toLowerCase() === want || x.id.toLowerCase() === want);
+          if (!d) throw new UsageError(`Unknown destination "${item.destinationId}". Known: ${destinations.map((x) => x.name).join(", ")}`);
+          item.destinationId = d.id;
+        }
+      }
       if (v["replace"]) {
         if (items.length > 2000) throw new UsageError("--replace takes at most 2000 items");
         const { cart } = await client.replaceCartItems(orgId, cartId, items, str(v, "source"));

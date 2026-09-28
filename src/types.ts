@@ -2,16 +2,33 @@
 
 export type Role = "owner" | "admin" | "member";
 
+export type Principal = {
+  subject: string;
+  handle?: string;
+  displayName?: string;
+  email?: string;
+  [key: string]: unknown;
+};
+
+/** `GET /v1/private/me`: the principal plus account fields at the top level. */
 export type MeResponse = {
-  user: {
-    subject: string;
-    handle?: string;
-    displayName?: string;
-    email?: string | null;
-    emailVerified?: boolean;
-    personalOrgId?: string;
-    [key: string]: unknown;
-  } | null;
+  principal: Principal | null;
+  email?: string | null;
+  emailVerified?: boolean;
+  personalOrgId?: string;
+  /** Older API builds nested everything under `user`; read through `meUser()`. */
+  user?: (Principal & { email?: string | null; emailVerified?: boolean; personalOrgId?: string }) | null;
+  [key: string]: unknown;
+};
+
+/** `getMe()` flattened: `null` when the token belongs to nobody. */
+export type MeUser = {
+  subject: string;
+  handle?: string;
+  displayName?: string;
+  email?: string | null;
+  emailVerified?: boolean;
+  personalOrgId?: string;
   [key: string]: unknown;
 };
 

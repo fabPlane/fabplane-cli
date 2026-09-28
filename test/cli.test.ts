@@ -263,6 +263,14 @@ describe("destinations and carts", () => {
     const csvPost = api.requests.filter((r) => r.method === "POST" && r.path.endsWith("/items")).at(-1)!;
     assert.deepEqual((csvPost.body as { items: unknown[] }).items[0], { refs: ["R1", "R2"], quantity: 2, mpn: "RC0603FR-0710KL", manufacturer: "Yageo", sku: "C98220", notes: "10k, 1%" });
 
+    await writeFile(join(dir, "named.csv"), "destination,mpn,quantity\nLCSC,C1,1\n");
+    assert.match((await cli(["carts", "import", cart.id, "named.csv"])).stdout, /Added 1 item/);
+    const namedPost = api.requests.filter((r) => r.method === "POST" && r.path.endsWith("/items")).at(-1)!;
+    assert.equal((namedPost.body as { items: Array<{ destinationId: string }> }).items[0]!.destinationId, "builtin:lcsc");
+    await writeFile(join(dir, "unknown.csv"), "destination,mpn,quantity\nNowhere,C1,1\n");
+    assert.match((await cli(["carts", "import", cart.id, "unknown.csv"])).stderr, /Unknown destination "Nowhere"/);
+    const lastItems = [...api.state.carts.get(cart.id)!["items"]];
+    api.state.carts.get(cart.id)!["items"] = lastItems.filter((i: { mpn?: string }) => i.mpn !== "C1");
     await writeFile(join(dir, "items.json"), JSON.stringify({ items: [{ mpn: "LED", quantity: 3 }] }));
     assert.match((await cli(["carts", "import", cart.id, "items.json"])).stdout, /Added 1 item/);
 

@@ -32,6 +32,7 @@ import type {
   ListInventoryQuery,
   Member,
   MeResponse,
+  MeUser,
   Org,
   OrgSummary,
   PublicCatalog,
@@ -578,6 +579,20 @@ export class FabplaneClient {
   getPushJob(jobId: string): Promise<PushJob> {
     return this.request("GET", `/v1/private/push/${enc(jobId)}`);
   }
+}
+
+/** Flattens a `getMe()` answer (current `{ principal, email, … }` or older `{ user }`). */
+export function meUser(me: MeResponse | AuthMeResponse | null | undefined): MeUser | null {
+  if (!me) return null;
+  const m = me as MeResponse;
+  const base = m.principal ?? m.user ?? null;
+  if (!base) return null;
+  return {
+    ...base,
+    ...(m.email !== undefined ? { email: m.email } : {}),
+    ...(m.emailVerified !== undefined ? { emailVerified: m.emailVerified } : {}),
+    ...(m.personalOrgId !== undefined ? { personalOrgId: m.personalOrgId } : {}),
+  };
 }
 
 async function parseBody(res: Response): Promise<unknown> {
