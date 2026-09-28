@@ -1,0 +1,301 @@
+# fabplane-cli
+
+Command line, MCP server and typed TypeScript client for [fabplane.com](https://fabplane.com):
+orgs, personal API tokens, carts (shopping lists / BOMs with per-item purchase destinations) and
+the parts inventory. It also talks to the local fabPlane desktop app (the fabdesk daemon).
+
+- `fabplane`: a CLI with human output by default and `--json` for scripts
+- `fabplane mcp`: a stdio MCP server for Claude Code, Codex, Cursor and other agents
+- `import { FabplaneClient } from "fabplane-cli"`: the same API as a library
+
+Docs: <https://fabplane.com/docs/cli> · API reference: <https://fabplane.com/docs/api> · MIT licensed.
+
+## Install
+
+```sh
+npm i -g fabplane-cli     # installs the `fabplane` command
+npx fabplane-cli help     # or run it without installing
+```
+
+Until the first npm release, install from GitHub:
+
+```sh
+npm i -g github:fabPlane/fabplane-cli
+```
+
+Node.js 20 or newer is required.
+
+## Sign in
+
+```sh
+fabplane login                       # browser device flow: prints a URL and code, waits for approval
+fabplane login --token fpk_…         # store a personal API token instead
+fabplane whoami
+fabplane logout
+```
+
+Credentials are resolved in this order:
+
+| What | Source |
+|---|---|
+| token | `--token` on `login`, then `FABPLANE_TOKEN`, then the credentials file |
+| API origin | `--origin`, then `FABPLANE_API_ORIGIN`, then the origin you last logged in to, then `https://api.fabplane.com` |
+| org | `--org`, then `FABPLANE_ORG`, then the default set with `fabplane orgs use`, then your personal org |
+
+The credentials file is `$XDG_CONFIG_HOME/fabplane/credentials.json` (default
+`~/.config/fabplane/credentials.json`; `%APPDATA%\fabplane\credentials.json` on Windows). It is
+written atomically with mode `0600` and keeps one profile per API origin, so you can be signed in to
+production and to a self-hosted or development API at the same time. `FABPLANE_CREDENTIALS_FILE`
+overrides the path.
+
+Personal API tokens (`fpk_…`) suit CI and agents: create one with `fabplane tokens create <name>`,
+then set `FABPLANE_TOKEN`. `logout` does not revoke `fpk_` tokens; use `fabplane tokens revoke <id>`.
+
+To use an API other than production, set `FABPLANE_API_ORIGIN` (for example
+`http://localhost:4000` for a local fabplane API) or pass `--origin`. Password login
+(`fabplane login --email … --password …`) exists only for local/development accounts and is refused
+against production.
+
+## Commands
+
+Every command accepts `--json` (machine output), `--org <id|slug>` and `--origin <url>`.
+`fabplane help <command>` prints the details.
+
+| Command | What it does |
+|---|---|
+| `login [--token fpk_…] [--origin URL] [--no-browser]` | Sign in (device flow) or store a token |
+| `logout` | Forget stored credentials; revokes a device session |
+| `whoami` | User, API origin, token source and default org |
+| `dashboard [--open]` | Print (or open) the web dashboard for the current API |
+| `orgs list` | Your orgs; `*` marks the default |
+| `orgs create <name> [--slug s]` | Create an org (you are owner) |
+| `orgs use <id\|slug>` | Set the default org for this API origin |
+| `orgs members` | Members of the org |
+| `orgs invite [--email e] [--role member\|admin] [--days n]` | Create an invite link (admin) |
+| `orgs invites` | Pending invites (admin) |
+| `orgs role <userId> <owner\|admin\|member>` | Change a member's role |
+| `orgs accept <token\|url>` | Accept an invite |
+| `orgs joinable` / `orgs join <id>` | Orgs your verified email domain may join, and joining one |
+| `tokens list` / `tokens create <name> [--days n]` / `tokens revoke <id>` | Personal API tokens (the secret is shown once) |
+| `destinations list` | Built-in fab houses and distributors plus the org's custom ones |
+| `destinations add --name N --url U [--kind k] [--base builtin:digikey]` | Add a custom destination, e.g. a regional DigiKey site |
+| `carts list [--repo URL] [--project ID]` | Carts, filtered by git repo or client project id |
+| `carts show <cartId>` | A cart, its items and per-destination totals |
+| `carts create <name> [--repo URL …] [--project ID] [--notes T] [--fab builtin:jlcpcb]` | Create a cart |
+| `carts add <cartId> --mpn M --qty N [--dest ID] [--refs R1,R2] [--sku S] [--price P --currency USD] …` | Add one item |
+| `carts import <cartId> <file.json\|file.csv\|-> [--replace] [--source S]` | Add items from JSON, JSONL or a BOM CSV (500 per request); `--replace` replaces all items |
+| `carts export <cartId> [--dest ID] [-o file.csv]` | CSV export, optionally for one destination |
+| `carts delete <cartId>` | Delete a cart |
+| `inventory list [--q text] [--category c] [--location l] [--tag t] [--limit n] [--cursor c] [--all]` | Search inventory |
+| `inventory show <id>` | One item with attributes and images |
+| `inventory add --name N [--mpn …] [--qty n] [--location l] [--tag t …] [--attr k=v …] [--image photo.jpg …] [--external-id id] [--server-ai]` | Add an item, optionally with photos |
+| `inventory import <file.jsonl\|->  [--source S]` | Bulk upsert, 500 items per request, keyed by `externalId` |
+| `inventory adjust <id> <delta> [--reason r]` | Atomic stock change, e.g. `-5` |
+| `inventory delete <id>` | Delete an item and its images |
+| `mcp [--desktop]` | Run the stdio MCP server |
+| `desktop status` / `desktop projects` / `desktop tools` | The local fabPlane desktop app |
+| `desktop call <tool> [json-args] [--project ID] [--sync]` | Call a desktop tool |
+| `api <METHOD> <path> [json\|-] [--anonymous]` | Raw request to any endpoint (escape hatch) |
+| `version`, `help [command]` | |
+
+Exit codes: `0` success, `1` API or runtime error, `2` usage error.
+
+### Carts and destinations
+
+Each cart item has a destination: a built-in (`builtin:jlcpcb`, `builtin:pcbway`,
+`builtin:oshpark`, `builtin:digikey`, `builtin:mouser`, `builtin:lcsc`, `builtin:arrow`,
+`builtin:farnell`, `builtin:aliexpress`, `builtin:amazon`, `builtin:manual`) or one of the org's
+custom destinations. Items without one go to the cart's fab house (`--fab`, JLCPCB by default).
+
+`carts import` reads CSV headers case-insensitively and understands common BOM names: `qty`,
+`designator`, `mfr`, `manufacturer part number`, `LCSC Part` (as `sku`), `value`, `footprint`,
+`unit price`, `destination`, `status`, `notes`. A row with no quantity column counts its designators.
+
+```sh
+fabplane carts create "Rev B" --repo https://github.com/acme/sensor-board
+fabplane carts import <cartId> bom.csv
+fabplane carts add <cartId> --mpn STM32G031K8T6 --qty 10 --dest builtin:lcsc
+fabplane carts export <cartId> --dest builtin:lcsc -o lcsc.csv
+```
+
+## Inventory from photos: extract locally, send fields
+
+The API stores what you send; it does not run AI on uploads. Setting `serverAiProcessing: true`
+(`--server-ai` on the CLI) is answered with **HTTP 501 `server_ai_unavailable`** and nothing is
+stored. Clients are expected to run a model locally (a vision model on the photo of a reel, bag
+label or datasheet), extract the fields, and send them as structured data with the photo attached:
+
+```sh
+# e.g. after a local model read the label of a reel:
+fabplane inventory add --name "10k 0603 resistor" --mpn RC0603FR-0710KL --manufacturer Yageo \
+  --qty 5000 --unit pcs --location "Lab / drawer A3" --tag passive \
+  --attr resistance=10k --attr tolerance=1% --attr package=0603 \
+  --source my-scanner --external-id reel-0042 --image reel.jpg
+```
+
+For batches, write one JSON object per line and import them. Rows are upserted by
+`(source, externalId)`, so re-running an import updates instead of duplicating:
+
+```jsonl
+{"name":"NE555 timer","mpn":"NE555P","manufacturer":"TI","quantity":25,"location":"Bin 4","externalId":"bin4-ne555","attributes":{"package":"DIP-8"}}
+{"name":"100nF 0402 capacitor","mpn":"GRM155R71C104KA88D","quantity":10000,"externalId":"reel-0107"}
+```
+
+```sh
+fabplane inventory import parts.jsonl --source my-scanner
+```
+
+Rows without an `externalId` get one derived from name, MPN, manufacturer, SKU and location.
+
+## MCP server
+
+`fabplane mcp` serves these tools over stdio. They act on your default org unless the agent passes
+`orgId`:
+
+| Tool | |
+|---|---|
+| `org_list` | Your orgs (ids, slugs, roles) |
+| `destination_list` | Purchase destinations for cart items |
+| `cart_list`, `cart_get`, `cart_create` | Find, read and create carts (by repo or project id) |
+| `cart_add_items`, `cart_update_item`, `cart_remove_item` | Edit cart items |
+| `inventory_search`, `inventory_add`, `inventory_adjust` | Search, add and count stock |
+
+`fabplane mcp --desktop` also exposes `desktop_status`, `desktop_projects` and `desktop_call_tool`,
+which reach the fabPlane desktop app running on the same machine.
+
+Sign in first (`fabplane login`) or pass `FABPLANE_TOKEN` in the server's environment.
+
+**Claude Code**
+
+```sh
+claude mcp add fabplane -- npx -y fabplane-cli mcp
+# with a token and the desktop tools:
+claude mcp add fabplane -e FABPLANE_TOKEN=fpk_… -- npx -y fabplane-cli mcp --desktop
+```
+
+**Codex** (`~/.codex/config.toml`)
+
+```toml
+[mcp_servers.fabplane]
+command = "npx"
+args = ["-y", "fabplane-cli", "mcp"]
+# env = { FABPLANE_TOKEN = "fpk_…", FABPLANE_ORG = "my-team" }
+```
+
+**Cursor** (`.cursor/mcp.json` or `~/.cursor/mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "fabplane": { "command": "npx", "args": ["-y", "fabplane-cli", "mcp"] }
+  }
+}
+```
+
+With a global install, use `"command": "fabplane", "args": ["mcp"]` instead of `npx`.
+
+## Library
+
+```ts
+import { FabplaneClient, FabplaneApiError, resolveAuth, resolveDefaultOrg, dashboardUrlFor } from "fabplane-cli";
+
+const client = new FabplaneClient({ token: process.env.FABPLANE_TOKEN }); // origin defaults to https://api.fabplane.com
+const orgId = await resolveDefaultOrg(client); // FABPLANE_ORG, else your personal org
+
+const { cart } = await client.createCart(orgId, { name: "Rev B", repos: ["https://github.com/acme/board"] });
+await client.addCartItems(orgId, cart.id, [{ mpn: "NE555P", quantity: 4, refs: ["U1", "U2", "U3", "U4"] }]);
+
+try {
+  await client.adjustInventory(orgId, "item-id", -10, "built 10 boards");
+} catch (err) {
+  if (err instanceof FabplaneApiError && err.code === "conflict") console.log("not enough stock");
+  else throw err;
+}
+
+console.log(dashboardUrlFor(client.origin)); // https://app.fabplane.com/dashboard
+```
+
+- Every API operation is a method named after its OpenAPI `operationId` (`listOrgs`, `createCart`,
+  `replaceCartItems`, `listInventory`, `bulkUpsertInventory`, `uploadInventoryImage`, …) and resolves
+  to the JSON body the API documents, e.g. `{ orgs }` or `{ items, nextCursor }`. `204` answers resolve
+  to `undefined`; `exportCartCsv` resolves to CSV text.
+- Also available: `startDeviceLogin`, `pollDeviceToken`, `waitForDeviceToken`, `me`, `logout`,
+  `getSettings`, `putSettings`, `publicCatalog`, `config`, `sendPush`, `getPushJob`, and `raw`/`request`
+  for anything else.
+- Failures throw `FabplaneApiError` with `status`, `code` (the API's `error` field), `message`, `body`.
+- Images: `createInventoryItem(orgId, input, [{ data, contentType, filename }])` sends multipart;
+  `data` may be a `Uint8Array`, `ArrayBuffer` or `Blob`.
+- Pass `fetch` to the constructor to inject your own implementation (tests, proxies).
+- `fabplaneTools` is the MCP tool list as plain objects (`name`, `title`, `description`, zod
+  `inputSchema` shape, `annotations`, `handler(client, args, { orgId })`) for embedding in another
+  MCP server; `createFabplaneMcpServer()` builds a ready `McpServer`.
+- `CredentialStore` and `resolveAuth()` read and write the same credentials file as the CLI.
+
+### The desktop app
+
+```ts
+import { FabdeskClient } from "fabplane-cli";
+
+const desk = new FabdeskClient(); // finds daemon.json; or { baseUrl, token }, or FABDESK_URL + FABDESK_TOKEN
+console.log(await desk.health(), await desk.projects());
+const tools = await desk.toolManifest();
+const result = await desk.callTool("board_stats", {}, { projectId: "…", sync: true });
+```
+
+`FabdeskClient` looks for `daemon.json` in `FABDESK_HOME`, then in the desktop app's data folders
+(`~/Library/Application Support/{fabPlane,fabdesk,fabPlane Dev,fabdesk-dev}` on macOS,
+`%APPDATA%\…` on Windows, `$XDG_CONFIG_HOME/…` on Linux), preferring a daemon whose process is alive.
+It covers `health`, `projects`, `project`, `readFile`, `threads`, `createThread`, `messages`,
+`sendMessage`, `liveRuns`, `toolManifest`, `callTool`, `jobs`, `job`, `waitJob`, `settings` and
+`authState`.
+
+## API spec sync
+
+`spec/openapi.json` is a snapshot of the API's OpenAPI 3.1 document and
+`src/generated/operations.ts` lists its operations. The **Sync API spec** workflow runs every Monday
+at 03:00 UTC (and on demand): it fetches `/v1/public/openapi.json`, regenerates both files and opens
+or updates a pull request when something changed, listing operations that have no `FabplaneClient`
+method yet. A test fails while any `operationId` lacks a method. If the API does not serve the
+document yet (404), the job ends without changes.
+
+```sh
+npm run sync-spec                 # fetch from FABPLANE_API_ORIGIN (default https://api.fabplane.com)
+npm run sync-spec -- --offline    # regenerate from the committed snapshot only
+```
+
+`spec/fabdesk-tools.json` is a snapshot of the desktop app's tool manifest (names, toolsets,
+descriptions and JSON-schema inputs, as served by `GET /tools/manifest`). The fabdesk repository
+refreshes it with a pull request here when its tools change.
+
+## Contributing
+
+```sh
+npm ci
+npm run build      # tsc → dist/
+npm test           # compiles src + test and runs node --test
+bun test           # the same tests straight from TypeScript
+```
+
+Tests run against a small in-memory fake of the API (`test/fake-api.ts`) and of the desktop daemon
+(`test/fake-daemon.ts`); no network access is needed. Keep runtime dependencies to
+`@modelcontextprotocol/sdk` and `zod` (imported as `zod/v4`), and keep `src/` free of Bun-only APIs:
+the package must run under plain Node. Bun workspaces that vendor this repo get `src/index.ts`
+through the `bun` export condition.
+
+## Publishing
+
+Releases go to npm from GitHub Actions (`.github/workflows/publish.yml`), which needs an npm token
+that has not been added yet:
+
+1. On npmjs.com, create an **automation** (or granular publish) token that can publish the
+   `fabplane-cli` package.
+2. Add it as the `NPM_TOKEN` repository secret: Settings → Secrets and variables → Actions.
+3. Bump `version` in `package.json` and `src/version.ts`, then publish a GitHub release or push a
+   `v*` tag (e.g. `v0.1.1`). The workflow builds, tests and runs `npm publish --provenance`.
+
+Without the secret the workflow fails on its first step with an error asking for it, and publishes
+nothing. Until then, install from GitHub: `npm i -g github:fabPlane/fabplane-cli`.
+
+## License
+
+MIT

@@ -222,7 +222,9 @@ export class FabdeskClient {
         ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
       });
     } catch (err) {
-      throw new FabdeskError(0, path, `Cannot reach the fabdesk daemon at ${baseUrl}: ${err instanceof Error ? err.message : String(err)}`);
+      const file = (this.resolved?.handshake as { file?: string } | null)?.file;
+      const hint = file ? ` (address from ${file}; the desktop app may have exited: start it again)` : "";
+      throw new FabdeskError(0, path, `Cannot reach the fabdesk daemon at ${baseUrl}: ${err instanceof Error ? err.message : String(err)}${hint}`);
     }
     const text = await res.text().catch(() => "");
     let body: unknown = text;
