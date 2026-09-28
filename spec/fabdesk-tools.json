@@ -1,0 +1,1706 @@
+{
+  "source": "fabdesk",
+  "fabdeskVersion": "0.2.0",
+  "generatedAt": "2026-09-28",
+  "toolCount": 50,
+  "tools": [
+    {
+      "name": "load_toolset",
+      "toolset": "core",
+      "title": "Load a toolset",
+      "description": "Enable an additional group of fabdesk tools for this session. Toolsets: project (read/write project files, sketches, board settings, adopt a KiCad board), circuit (query the board, search footprint libraries), route (routing status/cancel/unroute/scope), kicad (board stats), verify (ERC, release gate), render (schematic/PCB SVG, 3D GLB), export (gerbers, drill, pick-and-place, BOM, netlist, zip), sim (SPICE netlist and simulation), app (screenshot and drive the fabPlane desktop app window on the user's behalf: find/click/type, switch project, tab, thread, send chat messages, control Route Cinema; needs the app running in dev or with FABDESK_AUTOMATION=1 — not for diagnosing a route: route_status and reports/drc.json say more than a screenshot). Call this before using a tool from that group; the core tools (project_status, circuit_build, circuit_place, circuit_read_errors, route_run, verify_drc, render_board) are always available.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "toolset": {
+            "description": "Toolset to enable",
+            "type": "string",
+            "enum": [
+              "core",
+              "project",
+              "circuit",
+              "route",
+              "kicad",
+              "verify",
+              "render",
+              "export",
+              "sim",
+              "app"
+            ]
+          }
+        },
+        "required": [
+          "toolset"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "project_status",
+      "toolset": "core",
+      "title": "Project status",
+      "description": "Summarise the current project: id, directory, board settings, which artefacts exist (circuit.netlist.json, board.kicad_pcb, board.kicad_sch), last build error count, latest route run and available reports. Call it first to learn the file contract before writing circuit.netlist.json.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "circuit_build",
+      "toolset": "core",
+      "title": "Build the board",
+      "description": "Compile circuit.netlist.json into board.kicad_pcb and a generated board.kicad_sch. Footprints are pulled from KiCad libraries, explicitly placed when board.placements names them, and connected into the ratsnest; libSource draws searchable schematic symbols with labelled wire stubs. Returns actionable errors/warnings. Rebuilds replace only generated schematic items, preserve manual schematic work and unlisted manual footprint placement, keep tracks whose nets still exist, and remove footprints the netlist no longer names.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "entrypoint": {
+            "description": "Netlist file relative to the project, default circuit.netlist.json",
+            "type": "string"
+          },
+          "rebuild": {
+            "description": "preserve keeps compatible existing copper; clean removes routed tracks/arcs/vias after source validation before rebuilding",
+            "default": "preserve",
+            "type": "string",
+            "enum": [
+              "preserve",
+              "clean"
+            ]
+          },
+          "fresh": {
+            "description": "Discard the existing board first (outline, placement, tracks) and build from the netlist alone. Needed after changing the board size: a build never redraws an outline that exists.",
+            "type": "boolean"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "circuit_place",
+      "toolset": "core",
+      "title": "Place footprints",
+      "description": "Move footprints on the built board: each entry is a reference with its new origin in mm in KiCad board coordinates (y downwards; the outline's corner is NOT at 0,0 — read it with circuit_query select=outline first) and an optional rotation in degrees. Use it when the autoplacer left parts off the board or in a corner (DRC copper_edge_clearance / courtyards_overlap), or to put connectors on an edge before route_run. Tracks are not moved: unroute affected nets and route again afterwards. Rebuilding keeps placements.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "placements": {
+            "minItems": 1,
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "description": "Reference designator, e.g. J2",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "x": {
+                  "description": "Footprint origin X in mm",
+                  "type": "number"
+                },
+                "y": {
+                  "description": "Footprint origin Y in mm",
+                  "type": "number"
+                },
+                "rotation": {
+                  "description": "Degrees; omit to keep",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "ref",
+                "x",
+                "y"
+              ]
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "placements"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "circuit_read_errors",
+      "toolset": "core",
+      "title": "Read build errors",
+      "description": "Return the errors and warnings of the last circuit_build (from reports/build.json). Use it to decide what to fix in circuit.netlist.json.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "route_run",
+      "toolset": "core",
+      "title": "Autoroute the board",
+      "description": "Autoroute board.kicad_pcb on the design server (capacity: the built-in JS router; freerouting: internal builds only). Streams progress frames to the app, persists them under .fabdesk/runs/<runId>/frames.jsonl, applies the tracks to the board as one undo entry and returns which nets stayed open plus via/track counts. Requires circuit_build. Use route_unroute + route_run with onlyConnections to redo specific nets. If routing reports a blocked endpoint or board-edge violation, move the named footprint inward or enlarge the board, rebuild, and retry; never split or rename an electrical net merely to bypass a routing failure.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "router": {
+            "description": "Router; defaults to the project's fabdesk.json router",
+            "type": "string",
+            "enum": [
+              "capacity",
+              "freerouting"
+            ]
+          },
+          "timeoutMs": {
+            "default": 120000,
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 1800000
+          },
+          "onlyConnections": {
+            "description": "Route only these nets (after route_unroute)",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "settings": {
+            "description": "Router specific settings",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "verify_drc",
+      "toolset": "core",
+      "title": "Run KiCad DRC",
+      "description": "Run KiCad design rule check on board.kicad_pcb. Writes reports/drc.json and returns error/warning/unconnected counts with the first violations. Requires kicad-cli and circuit_build.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "severity": {
+            "description": "Report all severities or errors only",
+            "default": "all",
+            "type": "string",
+            "enum": [
+              "all",
+              "error"
+            ]
+          },
+          "schematicParity": {
+            "description": "Also check PCB↔schematic parity (requires libSource for generated symbols)",
+            "default": false,
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Max violations to include in the text summary",
+            "default": 30,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "render_board",
+      "toolset": "core",
+      "title": "Render board image",
+      "description": "Render a PNG of the KiCad board (top or bottom, raytraced optional) to renders/<view>.png and return it as an image so you can inspect placement and routing. Requires kicad-cli and circuit_build.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "view": {
+            "default": "top",
+            "type": "string",
+            "enum": [
+              "top",
+              "bottom",
+              "perspective",
+              "side"
+            ]
+          },
+          "width": {
+            "default": 1024,
+            "type": "integer",
+            "minimum": 128,
+            "maximum": 4096
+          },
+          "height": {
+            "default": 768,
+            "type": "integer",
+            "minimum": 128,
+            "maximum": 4096
+          },
+          "quality": {
+            "description": "basic is fast; high raytraces",
+            "default": "basic",
+            "type": "string",
+            "enum": [
+              "basic",
+              "high"
+            ]
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "project_read_file",
+      "toolset": "project",
+      "title": "Read a project file",
+      "description": "Read a text file inside the project directory (e.g. circuit.netlist.json, reports/drc.json, fabdesk.json). Paths are relative to the project and may not leave it. Binary files are reported by size only; use project_list_sketches for images.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Relative path, e.g. circuit.netlist.json",
+            "type": "string",
+            "minLength": 1
+          },
+          "maxChars": {
+            "default": 50000,
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 200000
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "project_write_file",
+      "toolset": "project",
+      "title": "Write a project file",
+      "description": "Create or overwrite a text file inside the project directory, creating parent directories. Use it to write circuit.netlist.json. Paths are relative to the project and may not leave it; fabdesk.json must be changed through project_set_board.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Relative path, e.g. circuit.netlist.json",
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "description": "Full file content (UTF-8)",
+            "type": "string"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "project_list_sketches",
+      "toolset": "project",
+      "title": "List sketches",
+      "description": "List the user's sketch images (PNG/JPEG/SVG under sketches/) with absolute paths so you can open them with your image reading capability. Sketches describe the desired board; interpret them before writing circuit.netlist.json.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "project_set_board",
+      "toolset": "project",
+      "title": "Set board settings",
+      "description": "Update board constraints in fabdesk.json: layer count (1-8), outline width/height in mm, the router to use, and optionally a prefab blank template. The size becomes the board outline the next circuit_build draws (when circuit.netlist.json has no board of its own); board.rules reach the KiCad board on the next build; the router is used by route_run. template=\"viagrid-9055\" sets up Opulo's 90 x 55 mm Viagrid blank: circuit_build then draws the blank itself (outline, 180 factory vias as free vias, 4 mounting holes, 0.2 mm track and clearance rules) instead of the netlist's board, and route_run uses the laser-prefab solver so layers change only through the factory vias, which it claims. template=\"none\" removes it.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "layers": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "widthMm": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "heightMm": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "router": {
+            "type": "string",
+            "enum": [
+              "capacity",
+              "freerouting"
+            ]
+          },
+          "template": {
+            "description": "Prefab blank to design on; viagrid-9055 or none",
+            "type": "string",
+            "enum": [
+              "viagrid-9055",
+              "none"
+            ]
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "project_import_kicad",
+      "toolset": "project",
+      "title": "Adopt a KiCad board",
+      "description": "Copy an existing .kicad_pcb (and its .kicad_pro / .kicad_sch when they sit next to it) into the project as board.kicad_pcb, board.kicad_pro and board.kicad_sch, so route_run, verify_drc, render and export tools work on it. The board becomes the design; a later circuit_build updates it from circuit.netlist.json (footprints the netlist does not name are removed). Sets fabdesk.json board.layers from the board when kicad-cli is available.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Absolute path to the .kicad_pcb, or a path relative to the project",
+            "type": "string",
+            "minLength": 1
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "circuit_query",
+      "toolset": "circuit",
+      "title": "Query the board",
+      "description": "List what the board holds, straight from KiCad, as a compact table: components (ref, value, footprint, position), nets (name, pad count), pads (component, number, net, position, size), vias (position, net; a blank's free vias have an empty net), tracks (routed tracks/arcs/vias per net), unrouted (the airlines still open) or outline (the Edge.Cuts bounding box in mm — read it before circuit_place: the outline's corner is not at 0,0). Optional substring filter on names. Requires circuit_build.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "select": {
+            "type": "string",
+            "enum": [
+              "components",
+              "nets",
+              "pads",
+              "vias",
+              "tracks",
+              "unrouted",
+              "outline"
+            ]
+          },
+          "filter": {
+            "description": "Case-insensitive substring matched against refs/nets/footprints",
+            "type": "string"
+          },
+          "limit": {
+            "default": 100,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "select"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "circuit_search_parts",
+      "toolset": "circuit",
+      "title": "Search KiCad libraries",
+      "description": "Search the KiCad footprint or symbol libraries the design server can see. Footprint results go in component `footprint`; symbol results split at the colon into `libSource: {lib, part}` so circuit_build can draw the generated schematic.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "kind": {
+            "default": "footprint",
+            "type": "string",
+            "enum": [
+              "footprint",
+              "symbol"
+            ]
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "circuit_describe_part",
+      "toolset": "circuit",
+      "title": "Describe a KiCad part",
+      "description": "Inspect one exact KiCad symbol or footprint before wiring or placing it. Symbols return pin numbers, names and electrical types; footprints return pad numbers, anchor-relative positions and sizes in millimetres.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "footprint",
+              "symbol"
+            ]
+          },
+          "libId": {
+            "description": "Exact Library:Name returned by circuit_search_parts",
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "kind",
+          "libId"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "route_status",
+      "toolset": "route",
+      "title": "Routing status",
+      "description": "Status of a route run (default: the latest for the project): running/done/failed, open nets, statistics and the frames file path.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "route_cancel",
+      "toolset": "route",
+      "title": "Cancel routing",
+      "description": "Cancel the running route job on the design server. The job stops between steps; nothing is applied to the board.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "route_unroute",
+      "toolset": "route",
+      "title": "Remove routed tracks",
+      "description": "Delete routed tracks, arcs and vias from the board — all of them or only the named nets — so they can be rerouted with route_run {onlyConnections}. One undo entry in KiCad.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "connections": {
+            "description": "Net names to unroute; omit for all",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "route_scope",
+      "toolset": "route",
+      "title": "Nets attached to components",
+      "description": "List the nets attached to component references (e.g. the footprints a repair touches) so they can be unrouted and re-routed with route_run {onlyConnections}. Nets that own a copper pour are excluded by default and listed with the reason.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "refs": {
+            "description": "Component references, e.g. [\"U701\", \"Q701\"]",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "excludePlaneNets": {
+            "default": true,
+            "type": "boolean"
+          },
+          "excludeNets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "refs"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "kicad_stats",
+      "toolset": "kicad",
+      "title": "Board statistics",
+      "description": "Board statistics from KiCad: outline size, layer count, footprint/pad/track/via counts, drill sizes. Requires kicad-cli and board.kicad_pcb.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "verify_erc",
+      "toolset": "verify",
+      "title": "Run KiCad ERC",
+      "description": "Run KiCad electrical rule check on board.kicad_sch, write reports/erc.json and return counts plus the first violations. For generated schematics, give every component a valid libSource and review build warnings first.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "severity": {
+            "default": "all",
+            "type": "string",
+            "enum": [
+              "all",
+              "error"
+            ]
+          },
+          "limit": {
+            "default": 30,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "verify_gate",
+      "toolset": "verify",
+      "title": "Release gate",
+      "description": "Evaluate the release gate over the latest reports/drc.json and reports/erc.json: pass when DRC errors == 0, unconnected == 0, ERC errors == 0 and every DRC warning signature is in fabdesk.json allowedDrcWarnings. Returns the reasons for failure and new warning signatures; pass acceptWarnings=true to baseline the current warnings (only after a human reviewed them).",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "acceptWarnings": {
+            "description": "Add the current new warning signatures to the allowed baseline",
+            "default": false,
+            "type": "boolean"
+          },
+          "requireErc": {
+            "description": "Fail when no ERC report exists",
+            "default": false,
+            "type": "boolean"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "verify_viagrid",
+      "toolset": "verify",
+      "title": "Check the Viagrid rules",
+      "description": "For a project on a Viagrid 9055 blank (project_set_board template=viagrid-9055): reads the vias and pads from the KiCad board on the design server and checks that every via is one of the blank's 180 factory vias (claimed by route_run, none added elsewhere or stacked on a factory via), that the whole blank is there, and that pads stay clear of the four mounting holes. Writes reports/viagrid.json. Run it after route_run and before verify_drc; positions in the report are in the blank's frame (centre origin, +y up).",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "render_schematic_svg",
+      "toolset": "render",
+      "title": "Render schematic SVG",
+      "description": "Render board.kicad_sch to renders/schematic.svg with kicad-cli and return it. circuit_build draws components that supply libSource and labelled wire stubs for their connected pins.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "render_pcb_svg",
+      "toolset": "render",
+      "title": "Render PCB SVG",
+      "description": "Render board.kicad_pcb (copper, silkscreen, edge cuts) to renders/pcb.svg with kicad-cli and return it. Requires circuit_build.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "render_glb",
+      "toolset": "render",
+      "title": "Export 3D GLB",
+      "description": "Export a 3D model (GLB) of the KiCad board to renders/board.glb for the app's 3D tab. Requires kicad-cli and board.kicad_pcb.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "export_gerbers",
+      "toolset": "export",
+      "title": "Export Gerbers",
+      "description": "Export Gerber files for all copper, mask, paste, silkscreen and edge layers to exports/gerbers/. Requires kicad-cli and board.kicad_pcb.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "export_drill",
+      "toolset": "export",
+      "title": "Export drill files",
+      "description": "Export Excellon drill files (plated/non-plated, with map) to exports/gerbers/. Requires kicad-cli and board.kicad_pcb.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "export_pos",
+      "toolset": "export",
+      "title": "Export pick-and-place",
+      "description": "Export the component placement (pick-and-place) CSV to exports/positions.csv. Requires kicad-cli and board.kicad_pcb.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "export_bom",
+      "toolset": "export",
+      "title": "Export BOM",
+      "description": "Export the bill of materials CSV (reference, value, footprint, quantity and any extra fields) from circuit.netlist.json to exports/bom.csv.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "export_netlist",
+      "toolset": "export",
+      "title": "Export netlist",
+      "description": "Export the netlist to exports/netlist.<net|cir>: kicadsexpr is the KiCad netlist the last circuit_build handed to KiCad; spice is generated from circuit.netlist.json.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "format": {
+            "default": "kicadsexpr",
+            "type": "string",
+            "enum": [
+              "kicadsexpr",
+              "spice"
+            ]
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "export_zip",
+      "toolset": "export",
+      "title": "Zip fabrication outputs",
+      "description": "Bundle exports/gerbers, positions.csv and bom.csv into exports/fabrication.zip for upload to a fab house. Run export_gerbers, export_drill, export_pos and export_bom first (missing ones are skipped and reported).",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "export_dxf",
+      "toolset": "export",
+      "title": "Export DXF artwork",
+      "description": "Export one DXF per layer (mm) to exports/dxf/: the copper-removal artwork for prefab blanks such as Viagrid, where a laser (LightBurn) or CNC isolates the traces instead of a fab. Default layers F.Cu, B.Cu and Edge.Cuts. The bottom layer is drawn as seen from the top: mirror it in the laser software before burning. Requires kicad-cli and board.kicad_pcb.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "layers": {
+            "description": "KiCad layer names, e.g. F.Cu, B.Cu, Edge.Cuts, F.Mask",
+            "default": [
+              "F.Cu",
+              "B.Cu",
+              "Edge.Cuts"
+            ],
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "sim_spice_netlist",
+      "toolset": "sim",
+      "title": "Generate SPICE netlist",
+      "description": "Generate a SPICE netlist from circuit.netlist.json (R/C/L by value, V/I sources, diodes with a default model), save it to exports/circuit.cir and return it. ICs without models are omitted with a note.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "sim_run",
+      "toolset": "sim",
+      "title": "Run SPICE simulation",
+      "description": "Simulate circuit.netlist.json: analysis op (DC operating point), tran (transient; needs stopS, optional stepS) or ac (needs startHz/stopHz). Engine spicey (bundled, default) or ngspice (needs ngspice installed or KiCad's bundled copy). Writes reports/spice.json and returns a table of node voltages / branch currents (first rows for tran/ac).",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "analysis": {
+            "default": "op",
+            "type": "string",
+            "enum": [
+              "op",
+              "tran",
+              "ac"
+            ]
+          },
+          "engine": {
+            "default": "spicey",
+            "type": "string",
+            "enum": [
+              "spicey",
+              "ngspice"
+            ]
+          },
+          "stopS": {
+            "description": "tran: stop time in seconds",
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "stepS": {
+            "description": "tran: step in seconds",
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "startHz": {
+            "description": "ac: start frequency",
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "stopHz": {
+            "description": "ac: stop frequency",
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "points": {
+            "description": "ac: points per decade",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "limit": {
+            "description": "Rows in the text summary",
+            "default": 40,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "app_state",
+      "toolset": "app",
+      "title": "Desktop app state",
+      "description": "Inspect the running fabPlane desktop app: version, windows (id, bounds, focus, url) and a snapshot of the renderer UI (active project and thread, board tab, open panels, Route Cinema run/cursor/view mode/perf, auth and core status). Call it first to learn what the app is showing before screenshotting or clicking. Fails with `unavailable` when no app bridge is running.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_screenshot",
+      "toolset": "app",
+      "title": "Screenshot the app window",
+      "description": "Capture the fabPlane desktop window (or a region of it, CSS pixels) and return the image so you can see what the user sees. Defaults: scale 0.5, JPEG for full-window captures, PNG for regions. Use app_find to locate elements and app_click/app_type/app_key to interact, then screenshot again to verify.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "windowId": {
+            "description": "Window id from app_state; default focused/first window",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "region": {
+            "description": "Crop to this rectangle (CSS px, top-left origin of the page)",
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "height": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ]
+          },
+          "scale": {
+            "description": "Downscale factor; default 0.5 for full window, 1 for regions",
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 1
+          },
+          "format": {
+            "description": "Image format; default jpeg for full window, png for regions",
+            "type": "string",
+            "enum": [
+              "png",
+              "jpeg"
+            ]
+          },
+          "annotate": {
+            "description": "Reserved: overlay element refs (currently a no-op)",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_find",
+      "toolset": "app",
+      "title": "Find UI elements",
+      "description": "Search the app window for interactive or labelled elements (buttons, links, inputs, selects and their options, tabs, anything with a role, aria-label or data-testid) whose role, name, text or testid contains the query (case-insensitive; best matches first). Returns a `ref` per match: a stable CSS selector you pass to app_click {selector} or app_type {selector}. Example: app_find \"Route Cinema\" → click the tab; app_find \"whole board\" → pick a select option.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "Text to look for in role, name, text or data-testid",
+            "type": "string",
+            "minLength": 1
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "windowId": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_click",
+      "toolset": "app",
+      "title": "Click in the app",
+      "description": "Click an element by CSS selector (use a `ref` from app_find) or at window coordinates (CSS px). Selector clicks scroll the element into view and send real mouse events at its centre so React handlers fire; clicking an <option> selects it in its <select>. Follow with app_screenshot or app_state to verify.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "selector": {
+            "description": "CSS selector / ref from app_find",
+            "type": "string",
+            "minLength": 1
+          },
+          "x": {
+            "description": "CSS px from the left edge of the page (when no selector)",
+            "type": "number"
+          },
+          "y": {
+            "description": "CSS px from the top edge of the page (when no selector)",
+            "type": "number"
+          },
+          "button": {
+            "default": "left",
+            "type": "string",
+            "enum": [
+              "left",
+              "right",
+              "middle"
+            ]
+          },
+          "clickCount": {
+            "description": "2 for double-click",
+            "default": 1,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "windowId": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_type",
+      "toolset": "app",
+      "title": "Type text in the app",
+      "description": "Type text with real key events into the focused element, or focus `selector` first (a ref from app_find, e.g. the chat textarea). Newlines are typed as Shift+Enter; send Enter with app_key. For the chat composer prefer app_send_message, which sets the text and sends through the UI.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "selector": {
+            "description": "Focus this element before typing",
+            "type": "string",
+            "minLength": 1
+          },
+          "windowId": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_key",
+      "toolset": "app",
+      "title": "Press a key",
+      "description": "Send one key press (down/up) to the app using Electron accelerator syntax: `Enter`, `Escape`, `Tab`, `CommandOrControl+K` (command palette), `CommandOrControl+,` (settings), `Shift+Enter`, `ArrowDown`. Use it for shortcuts and to submit or dismiss dialogs.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "key": {
+            "description": "Accelerator string, e.g. Enter, Escape, CommandOrControl+K",
+            "type": "string",
+            "minLength": 1
+          },
+          "windowId": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_select_project",
+      "toolset": "app",
+      "title": "Select a project in the app",
+      "description": "Make a project the active one in the desktop UI (sidebar filter, board panel, new chats). Accepts a project id, name or path; resolved through the core's project store first. Returns the resulting UI state.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_open_tab",
+      "toolset": "app",
+      "title": "Open a board tab",
+      "description": "Open one of the board panel tabs (schematic, pcb, cinema = Route Cinema, 3d, drc, renders, files) and make sure the board panel is visible.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "tab": {
+            "type": "string",
+            "enum": [
+              "schematic",
+              "pcb",
+              "cinema",
+              "3d",
+              "drc",
+              "renders",
+              "files"
+            ]
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_open_thread",
+      "toolset": "app",
+      "title": "Open a chat thread",
+      "description": "Show an existing chat thread by id in the desktop UI (as if clicked in the sidebar).",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "thread": {
+            "description": "Thread id",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "thread"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_new_chat",
+      "toolset": "app",
+      "title": "Start a new chat",
+      "description": "Switch the desktop UI to a fresh, unsaved chat (composer focused) in the active project. The thread is created when the first message is sent.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_send_message",
+      "toolset": "app",
+      "title": "Send a chat message through the UI",
+      "description": "Put text in the chat composer and send it exactly as a user would (creating the thread when the UI is on a new chat, starting the selected agent run). Optionally pick the agent first. Returns whether the composer accepted the send and the thread id afterwards; use app_state/app_screenshot to follow the run.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50000
+          },
+          "agent": {
+            "description": "Agent id to select in the composer before sending (e.g. claude, codex)",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_cinema",
+      "toolset": "app",
+      "title": "Control Route Cinema",
+      "description": "Drive the Route Cinema tab: view (mode = board to fit the whole board, activity to follow recent copper), seek (index = frame to show; leaves live-follow), live (follow the newest frame again), layer (layer = copper layer index to toggle visibility), load (run = id of a persisted route run to replay, e.g. from route_status). The cinema only has a run after route_run streamed one in this app session or after load. Opens the cinema tab first. Returns the cinema state.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "view",
+              "seek",
+              "live",
+              "layer",
+              "load"
+            ]
+          },
+          "mode": {
+            "description": "For action=view",
+            "type": "string",
+            "enum": [
+              "board",
+              "activity"
+            ]
+          },
+          "index": {
+            "description": "For action=seek: frame index",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "layer": {
+            "description": "For action=layer: copper layer index",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "description": "For action=load: route run id",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_wait_for",
+      "toolset": "app",
+      "title": "Wait for a UI condition",
+      "description": "Poll a JavaScript expression in the renderer until it is truthy or the timeout elapses. The expression sees `state` (the app_state UI snapshot: activeProjectId, activeThreadId, boardTab, cinema.frames, ...) and `document`. Examples: `state.boardTab === 'cinema'`, `state.cinema.frames > 10`, `!!document.querySelector('[data-testid=\"production-toggle\"]')`.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "predicate": {
+            "description": "JS expression over `state` and `document`",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "timeoutMs": {
+            "default": 10000,
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 120000
+          }
+        },
+        "required": [
+          "predicate"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "app_eval",
+      "toolset": "app",
+      "title": "Evaluate JavaScript in the app",
+      "description": "Run arbitrary JavaScript in the renderer main world (dev/automation builds only) and return its JSON-serialisable result. `window.__fabdeskApp` exposes the automation API (state(), find(), selectProject(), ...). Prefer the specific app_* tools; use this for one-off inspection.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "code": {
+            "description": "Expression or statements (use `return` in statement form); async allowed",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64000
+          },
+          "timeoutMs": {
+            "default": 10000,
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 10000
+          },
+          "windowId": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "openWorldHint": true,
+        "idempotentHint": false
+      },
+      "longRunning": false
+    }
+  ]
+}

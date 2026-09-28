@@ -1,0 +1,60 @@
+name: Sync API spec
+
+# Weekly: fetch the fabplane OpenAPI document, regenerate src/generated/operations.ts and open
+# (or update) a PR when anything changed. Until the API serves /v1/public/openapi.json the fetch
+# 404s and the job ends green without changes.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-api
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Fetch spec and regenerate
+        id: sync
+        env:
+          FABPLANE_API_ORIGIN: ${{ vars.FABPLANE_API_ORIGIN || 'https://api.fabplane.com' }}
+        run: npm run sync-spec
+      - name: Build and test against the new spec
+        id: test
+        if: steps.sync.outputs.changed == 'true'
+        continue-on-error: true
+        run: npm run build && npm test
+      - name: Open or update the pull request
+        if: steps.sync.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/api-sync
+          delete-branch: true
+          commit-message: "chore: sync fabplane API spec"
+          title: "chore: sync fabplane API spec"
+          add-paths: |
+            spec/openapi.json
+            src/generated/operations.ts
+          body: |
+            Automated weekly sync of `spec/openapi.json` from `/v1/public/openapi.json`.
+
+            ${{ steps.sync.outputs.report }}
+
+            Tests against the new spec: **${{ steps.test.outcome }}**. A failing spec-coverage test means an
+            operation needs a `FabplaneClient` method (see "Missing FabplaneClient methods" above).
+
+            PRs opened with `GITHUB_TOKEN` do not trigger CI on their own; push a commit or re-run CI from the PR.

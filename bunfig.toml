@@ -1,0 +1,3 @@
+[test]
+# Run the TypeScript tests in test/ only (build-test/ holds the compiled copies for node --test).
+root = "./test"

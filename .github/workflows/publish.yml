@@ -1,0 +1,72 @@
+# Publishes fabplane-cli to npm. Needs the NPM_TOKEN repository secret, which is added later:
+# see "Publishing" in README.md. Without it this workflow fails on its first step and publishes nothing.
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# A release and its tag can both fire; the second run sees the version on npm and skips.
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check NPM_TOKEN
+        id: token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error title=NPM_TOKEN missing::Please add the NPM_TOKEN repository secret (Settings → Secrets and variables → Actions) to publish fabplane-cli to npm."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+        if: steps.token.outputs.present == 'true'
+      - name: Tag matches package.json
+        if: steps.token.outputs.present == 'true' && github.ref_type == 'tag'
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::Tag v$tag does not match package.json version $version"
+            exit 1
+          fi
+      - name: Skip versions already on npm
+        id: published
+        if: steps.token.outputs.present == 'true'
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if npm view "fabplane-cli@$version" version >/dev/null 2>&1; then
+            echo "fabplane-cli@$version is already published; nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - run: npm run build && npm test
+        if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
+      - name: npm publish
+        if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
