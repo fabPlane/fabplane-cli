@@ -269,6 +269,11 @@ npm run sync-spec -- --offline    # regenerate from the committed snapshot only
 descriptions and JSON-schema inputs, as served by `GET /tools/manifest`). The fabdesk repository
 refreshes it with a pull request here when its tools change.
 
+Both weekly sync jobs use the `FABPLANE_CLI_SYNC_TOKEN` repository secret: a fine-grained GitHub
+token scoped to this repository with Contents and Pull requests read/write. Add the same secret to
+`TensorFleet/fabdesk` for its cross-repository manifest sync. The API sync stops with a clear error
+when its secret is absent.
+
 ## Contributing
 
 ```sh

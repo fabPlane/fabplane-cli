@@ -21,6 +21,14 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      - name: Require FABPLANE_CLI_SYNC_TOKEN
+        env:
+          FABPLANE_CLI_SYNC_TOKEN: ${{ secrets.FABPLANE_CLI_SYNC_TOKEN }}
+        run: |
+          if [ -z "$FABPLANE_CLI_SYNC_TOKEN" ]; then
+            echo "::error title=FABPLANE_CLI_SYNC_TOKEN missing::Please add the FABPLANE_CLI_SYNC_TOKEN repository secret (fine-grained PAT: contents + pull-requests write on fabPlane/fabplane-cli). See the README's 'API spec sync' section."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -41,7 +49,7 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.FABPLANE_CLI_SYNC_TOKEN }}
           branch: chore/api-sync
           delete-branch: true
           commit-message: "chore: sync fabplane API spec"
@@ -57,4 +65,4 @@ jobs:
             Tests against the new spec: **${{ steps.test.outcome }}**. A failing spec-coverage test means an
             operation needs a `FabplaneClient` method (see "Missing FabplaneClient methods" above).
 
-            PRs opened with `GITHUB_TOKEN` do not trigger CI on their own; push a commit or re-run CI from the PR.
+            PRs opened with the sync token trigger CI automatically.
