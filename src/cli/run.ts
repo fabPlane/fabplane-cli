@@ -16,6 +16,7 @@ import {
   resolveDefaultOrg,
   tokenKindOf,
   type Env,
+  type Profile,
   type ResolvedAuth,
 } from "../credentials.js";
 import { cartItemsFromCsv, cartItemsFromJson, parseJsonl } from "../csv.js";
@@ -24,7 +25,7 @@ import { ImageFetchError, fetchImage, validateImage } from "../images.js";
 import { FabdeskClient, FabdeskError } from "../fabdesk.js";
 import { runMcpStdio, type FabplaneMcpOptions } from "../mcp.js";
 import { dashboardUrlFor } from "../origin.js";
-import type { AttributeValue, CartItemInput, ImageUpload, InventoryItemInput, PhotoQueueItem, ReleasePhotoQueueInput, Role } from "../types.js";
+import type { AttributeValue, Bot, CartItemInput, ImageUpload, InventoryItemInput, OrgSummary, PhotoQueueItem, ReleasePhotoQueueInput, Role } from "../types.js";
 import { VERSION } from "../version.js";
 import { keyValues, table } from "./format.js";
 
@@ -69,7 +70,9 @@ const GLOBAL_OPTIONS: Record<string, OptSpec> = {
   help: { type: "boolean", short: "h" },
 };
 
-const GROUPS = new Set(["orgs", "tokens", "destinations", "carts", "inventory", "inventory photos", "desktop"]);
+const GROUPS = new Set(["orgs", "tokens", "bot", "bots", "destinations", "carts", "inventory", "inventory photos", "desktop"]);
+
+const BOT_AGENT_KINDS = ["openclaw", "hermes", "fabdesk", "ci", "other"];
 
 const IMAGE_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -258,7 +261,7 @@ const commands: Record<string, Command> = {
         }),
       );
       if (!me) throw new UsageError("The token was not accepted (no user). Check it and try again.");
-      const kind = tokenKindOf(token);
+      const kind = me.bot ? "bot" : tokenKindOf(token);
       await ctx.store.saveProfile(origin, {
         token,
         ...(kind ? { tokenKind: kind } : {}),
@@ -269,8 +272,9 @@ const commands: Record<string, Command> = {
           displayName: me.displayName,
           email: me.email ?? undefined,
         }),
+        ...(me.bot ? { bot: botProfile(me.bot), defaultOrgId: me.bot.orgId } : {}),
       });
-      const who = me.handle ?? me.email ?? me.subject;
+      const who = me.bot ? `bot ${me.bot.name}` : (me.handle ?? me.email ?? me.subject);
       ctx.print({ ok: true, origin, user: me, credentials: ctx.store.path }, () => `Logged in to ${origin} as ${who}.`);
     },
   },
@@ -282,7 +286,8 @@ const commands: Record<string, Command> = {
       const auth = await ctx.auth();
       const profile = auth.profile;
       let revoked = false;
-      if (profile?.token && (profile.tokenKind ?? tokenKindOf(profile.token)) !== "api") {
+      const storedKind = profile?.token ? (profile.tokenKind ?? tokenKindOf(profile.token)) : undefined;
+      if (profile?.token && storedKind !== "api" && storedKind !== "bot") {
         revoked = await ctx
           .newClient(auth.origin, profile.token)
           .logout()
@@ -292,7 +297,9 @@ const commands: Record<string, Command> = {
       const removed = await ctx.store.removeProfile(auth.origin);
       if (auth.tokenSource === "env") ctx.info("Note: FABPLANE_TOKEN is still set in your environment.");
       ctx.print({ ok: true, origin: auth.origin, removed, revoked }, () =>
-        removed ? `Logged out of ${auth.origin}.${profile?.tokenKind === "api" ? " (Personal API tokens stay valid; revoke with `fabplane tokens revoke`.)" : ""}` : `No stored credentials for ${auth.origin}.`,
+        removed
+          ? `Logged out of ${auth.origin}.${storedKind === "api" ? " (Personal API tokens stay valid; revoke with `fabplane tokens revoke`.)" : storedKind === "bot" ? " (The bot token stays valid; an org admin removes the bot with `fabplane bots remove` or in the dashboard.)" : ""}`
+          : `No stored credentials for ${auth.origin}.`,
       );
     },
   },
@@ -304,7 +311,26 @@ const commands: Record<string, Command> = {
       const auth = await ctx.auth();
       const client = await ctx.client();
       const user = meUser(await client.getMe());
-      ctx.print({ origin: auth.origin, tokenSource: auth.tokenSource, defaultOrgId: auth.orgId ?? user?.personalOrgId ?? null, user }, () =>
+      if (user?.bot) {
+        const bot = user.bot;
+        const org = await client
+          .getOrg(bot.orgId)
+          .then((r) => r.org)
+          .catch(() => null);
+        ctx.print({ origin: auth.origin, tokenSource: auth.tokenSource, kind: "bot", bot, org, defaultOrgId: auth.orgId ?? bot.orgId, user }, () =>
+          keyValues([
+            ["kind", "bot"],
+            ["bot", `${bot.name} (${bot.id})`],
+            ["agent", bot.agentKind],
+            ["org", org ? `${org.name} (${org.slug}) ${org.id}` : bot.orgId],
+            ["role", bot.role],
+            ["origin", auth.origin],
+            ["token", auth.tokenSource === "env" ? "FABPLANE_TOKEN" : auth.tokenSource === "file" ? ctx.store.path : auth.tokenSource],
+          ]),
+        );
+        return;
+      }
+      ctx.print({ origin: auth.origin, tokenSource: auth.tokenSource, kind: user?.kind ?? "human", defaultOrgId: auth.orgId ?? user?.personalOrgId ?? null, user }, () =>
         keyValues([
           ["user", user ? (user.handle ?? user.subject) : "(none)"],
           ["name", user?.displayName],
@@ -907,6 +933,91 @@ const commands: Record<string, Command> = {
     },
   },
 
+  /* ---------- bots ---------- */
+  "bot connect": {
+    usage: "fabplane bot connect [--name NAME] [--org SLUG] [--agent openclaw|hermes|fabdesk|ci|other] [--origin URL] [--no-browser]",
+    summary: "Connect this machine as a bot: an org admin approves a link",
+    options: { name: { type: "string" }, agent: { type: "string" }, "no-browser": { type: "boolean" } },
+    async run(ctx, _args, v) {
+      const auth = await ctx.auth();
+      const origin = auth.origin;
+      const agent = str(v, "agent");
+      if (agent && !BOT_AGENT_KINDS.includes(agent)) throw new UsageError(`--agent must be one of ${BOT_AGENT_KINDS.join(", ")}`);
+      const name = str(v, "name") ?? `${agent ?? "fabplane-cli"} on ${hostname()}`;
+      if (name.length < 1 || name.length > 80) throw new UsageError("--name must be 1..80 characters");
+      const anon = ctx.newClient(origin);
+      const start = await anon.startBotConnect(def({ name, org: ctx.flags.org, agentKind: agent }));
+      const minutes = Math.round(start.expiresIn / 60);
+      ctx.info(
+        `To connect bot "${name}", an admin of the org opens\n  ${start.verificationUriComplete}\n` +
+          `and approves the code: ${start.userCode}\n(The request expires in ${minutes} minute${minutes === 1 ? "" : "s"}.)`,
+      );
+      if (!v["no-browser"] && ctx.io.openUrl) {
+        try {
+          ctx.io.openUrl(start.verificationUriComplete);
+        } catch {
+          /* the URL is printed */
+        }
+      }
+      ctx.info("Waiting for approval…");
+      const granted = await anon.waitForBotConnect(start, ctx.io.sleep ? { sleep: (ms) => ctx.io.sleep!(ms) } : {});
+      const previous = auth.profile && auth.profile.tokenKind !== "bot" ? (auth.profile.user?.handle ?? auth.profile.user?.email ?? undefined) : undefined;
+      await ctx.store.saveProfile(origin, {
+        token: granted.accessToken,
+        tokenKind: "bot",
+        expiresAt: null,
+        defaultOrgId: granted.org.id,
+        user: { handle: granted.bot.name },
+        bot: botProfile(granted.bot, granted.org),
+      });
+      if (previous) ctx.info(`Note: this replaced the stored login for ${origin} (was ${previous}).`);
+      if (auth.tokenSource === "env") ctx.info("Note: FABPLANE_TOKEN is set and still takes precedence over the stored bot token.");
+      ctx.print({ ok: true, origin, bot: granted.bot, org: granted.org, credentials: ctx.store.path }, () =>
+        `Connected bot "${granted.bot.name}" to ${granted.org.name} (${granted.org.slug}) as ${granted.bot.role}. It is now the default org for ${origin}.`,
+      );
+    },
+  },
+  "bots list": {
+    usage: "fabplane bots list [--org id|slug]",
+    summary: "Bot members of the org (admin)",
+    async run(ctx) {
+      const { bots } = await (await ctx.client()).listBots(await ctx.orgId());
+      ctx.print({ bots }, () => table(bots, [["id", "id"], ["name", "name"], ["agentKind", "agent"], ["role", "role"], ["lastUsedAt", "last used"], ["createdAt", "created"]]));
+    },
+  },
+  "bots create": {
+    usage: "fabplane bots create <name> [--role member|admin] [--agent KIND]",
+    summary: "Create a bot and print its token once (headless setups)",
+    options: { role: { type: "string" }, agent: { type: "string" } },
+    async run(ctx, args, v) {
+      const name = need(args, 0, "name");
+      const role = str(v, "role");
+      if (role && role !== "member" && role !== "admin") throw new UsageError("--role must be member or admin");
+      const agent = str(v, "agent");
+      if (agent && !BOT_AGENT_KINDS.includes(agent)) throw new UsageError(`--agent must be one of ${BOT_AGENT_KINDS.join(", ")}`);
+      const res = await (await ctx.client()).createBot(await ctx.orgId(), def({ name, role: role as Role | undefined, agentKind: agent }));
+      ctx.print(res, () => `${res.token}\n\nBot "${res.bot.name}" (${res.bot.id}), role ${res.bot.role}. Copy the token now: it is not shown again.\nOn the bot's machine: FABPLANE_TOKEN=… or \`fabplane login --token …\`.`);
+    },
+  },
+  "bots rotate": {
+    usage: "fabplane bots rotate <botId>",
+    summary: "Issue a new bot token (revokes the old ones)",
+    async run(ctx, args) {
+      const botId = need(args, 0, "botId");
+      const res = await (await ctx.client()).rotateBotToken(await ctx.orgId(), botId);
+      ctx.print({ botId, ...res }, () => `${res.token}\n\nNew token for bot ${botId}; its previous tokens no longer work.`);
+    },
+  },
+  "bots remove": {
+    usage: "fabplane bots remove <botId>",
+    summary: "Delete a bot and revoke its tokens",
+    async run(ctx, args) {
+      const botId = need(args, 0, "botId");
+      await (await ctx.client()).deleteBot(await ctx.orgId(), botId);
+      ctx.print({ ok: true, botId }, () => `Removed bot ${botId}.`);
+    },
+  },
+
   /* ---------- mcp ---------- */
   mcp: {
     usage: "fabplane mcp [--desktop]",
@@ -1032,6 +1143,17 @@ async function releaseWithLease(ctx: Ctx, itemId: string, body: ReleasePhotoQueu
   }
 }
 
+function botProfile(bot: Bot, org?: OrgSummary): NonNullable<Profile["bot"]> {
+  return {
+    id: bot.id,
+    name: bot.name,
+    orgId: bot.orgId,
+    role: bot.role,
+    agentKind: bot.agentKind,
+    ...(org ? { orgSlug: org.slug, orgName: org.name } : {}),
+  };
+}
+
 function photoTable(items: PhotoQueueItem[]): string {
   return table(
     items.map((i) => ({ ...i, status: i.photoSearch.status, attempts: i.photoSearch.attempts, lease: i.photoSearch.leaseUntil ? `${i.photoSearch.leaseOwner ?? "?"} until ${i.photoSearch.leaseUntil}` : "", note: i.photoSearch.note })),
@@ -1042,6 +1164,18 @@ function photoTable(items: PhotoQueueItem[]): string {
 function derivedExternalId(item: InventoryItemInput): string {
   const key = [item.name, item.mpn, item.manufacturer, item.sku, item.location].map((s) => (s ?? "").trim().toLowerCase()).join("|");
   return `sha256:${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
+}
+
+/** Every command with the flags it accepts (global flags included); used to lint docs and skills. */
+export function commandTable(): Array<{ command: string; usage: string; options: string[] }> {
+  return [
+    ...Object.entries(commands).map(([command, c]) => ({
+      command,
+      usage: c.usage,
+      options: [...Object.keys(GLOBAL_OPTIONS), ...Object.keys(c.options ?? {})],
+    })),
+    { command: "help", usage: "fabplane help [command]", options: [] },
+  ];
 }
 
 export function helpText(topic?: string): string {

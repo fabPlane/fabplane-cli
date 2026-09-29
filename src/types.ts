@@ -12,7 +12,9 @@ export type Principal = {
 
 /** `GET /v1/private/me`: the principal plus account fields at the top level. */
 export type MeResponse = {
-  principal: Principal | null;
+  principal: (Principal & { kind?: "human" | "bot" }) | null;
+  /** Present when the caller is a bot (v1.2). */
+  bot?: Bot | null;
   email?: string | null;
   emailVerified?: boolean;
   personalOrgId?: string;
@@ -24,6 +26,8 @@ export type MeResponse = {
 /** `getMe()` flattened: `null` when the token belongs to nobody. */
 export type MeUser = {
   subject: string;
+  kind?: "human" | "bot";
+  bot?: Bot;
   handle?: string;
   displayName?: string;
   email?: string | null;
@@ -66,6 +70,8 @@ export type Member = {
   email: string | null;
   role: Role;
   joinedAt: string;
+  /** v1.2: `bot` for bot members; absent on older API builds (= human). */
+  kind?: "human" | "bot";
 };
 
 export type Invite = {
@@ -323,3 +329,48 @@ export type PushJob = {
   outcomes: Array<{ index: number; outcome: string; error?: string }>;
   [key: string]: unknown;
 };
+
+/* ---------- v1.2: bot accounts ---------- */
+
+export type BotAgentKind = "openclaw" | "hermes" | "fabdesk" | "ci" | "other";
+
+export type Bot = {
+  id: string;
+  orgId: string;
+  name: string;
+  agentKind: string | null;
+  role: Role;
+  createdBy: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+};
+
+export type StartBotConnectInput = { name: string; clientId?: string; org?: string; agentKind?: BotAgentKind | string };
+
+export type BotConnectStart = {
+  connectCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresIn: number;
+  interval: number;
+};
+
+export type BotConnectToken = { accessToken: string; tokenType: string; bot: Bot; org: OrgSummary };
+
+export type BotConnectPollOutcome =
+  | { status: "pending" }
+  /** `interval`: the server's new polling interval in seconds, when it sends one. */
+  | { status: "slow_down"; interval?: number }
+  | { status: "token"; token: BotConnectToken }
+  | { status: "error"; error: string; description?: string };
+
+export type BotConnectRequest = {
+  name: string;
+  agentKind: string | null;
+  requestedOrgSlug: string | null;
+  expiresAt: string;
+  status: "pending" | "approved" | "denied" | "expired";
+};
+
+export type CreateBotInput = { name: string; role?: Role; agentKind?: BotAgentKind | string };

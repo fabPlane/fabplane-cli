@@ -79,6 +79,8 @@ Every command accepts `--json` (machine output), `--org <id|slug>` and `--origin
 | `orgs accept <token\|url>` | Accept an invite |
 | `orgs joinable` / `orgs join <id>` | Orgs your verified email domain may join, and joining one |
 | `tokens list` / `tokens create <name> [--days n]` / `tokens revoke <id>` | Personal API tokens (the secret is shown once) |
+| `bot connect [--name N] [--org slug] [--agent openclaw\|hermes\|fabdesk\|ci\|other] [--no-browser]` | Connect this machine as a bot; an org admin approves a link |
+| `bots list` / `bots create <name> [--role member\|admin] [--agent k]` / `bots rotate <botId>` / `bots remove <botId>` | Manage the org's bots (admin; tokens are shown once) |
 | `destinations list` | Built-in fab houses and distributors plus the org's custom ones |
 | `destinations add --name N --url U [--kind k] [--base builtin:digikey]` | Add a custom destination, e.g. a regional DigiKey site |
 | `carts list [--repo URL] [--project ID]` | Carts, filtered by git repo or client project id |
@@ -237,6 +239,49 @@ Agents get the same flow through the MCP tools: `inventory_photo_claim`, then ei
 `inventory_photo_attach` (`imageUrl`, or base64 `data` with `contentType`, plus `sourceUrl`) or
 `inventory_photo_release`.
 
+## Bots and agents
+
+Agents (openclaw, Hermes, CI jobs, automations) should not use a person's login. They join an org as
+a **bot member**: a separate identity with its own `fpb_…` token and a role, listed among the org's
+members with `kind: bot`. A bot can use everything inside its own org (inventory, carts, the photo
+queue, destinations, the member list) with its role. It gets 403 on tokens, invites, bot management,
+settings and creating or joining orgs, and cannot see other orgs.
+
+**Connect with a link** (recommended). On the agent's machine, as the user the agent runs as:
+
+```sh
+fabplane bot connect --agent openclaw --name "openclaw on $(hostname)"
+```
+
+The CLI prints a dashboard link and a code to stderr (and opens the browser unless `--no-browser`),
+then waits. An org admin opens the link, checks the code, picks the org and role, and approves. The
+CLI stores the bot token as the credential for that API origin and makes the bot's org the default
+org. A denied or expired request (15 minutes) ends with a clear error, and nothing is stored.
+`fabplane whoami` then shows `kind: bot`, the bot's name and its org.
+
+**Create directly** (headless machines, CI). An admin runs:
+
+```sh
+fabplane bots create "nightly-bom-sync" --agent ci      # prints the fpb_ token once
+```
+
+Then give the token to the job as `FABPLANE_TOKEN`, or run `fabplane login --token fpb_…` on its machine.
+`fabplane bots rotate <botId>` issues a new token and revokes the old ones. `fabplane bots remove <botId>`
+deletes the bot. `fabplane logout` on the bot's machine only forgets the token; to revoke access, remove
+the bot.
+
+With a bot credential loaded, `fabplane mcp` and every command work as usual, defaulting to the bot's org.
+
+Ready-made agent skills live in [`integrations/`](integrations/). They are also shipped in the npm
+package under `integrations/`:
+
+- [`integrations/openclaw`](integrations/openclaw/README.md): an openclaw skill, plus a nightly
+  `openclaw cron add` job for the photo backfill.
+- [`integrations/hermes`](integrations/hermes/README.md): a Hermes Agent skill, plus a `hermes cron`
+  job.
+
+Both cover inventory upkeep, shopping lists and the photo backfill loop.
+
 ## MCP server
 
 `fabplane mcp` serves these tools over stdio. They act on your default org unless the agent passes
@@ -321,6 +366,8 @@ console.log(dashboardUrlFor(client.origin)); // https://app.fabplane.com/dashboa
 - `fabplaneTools` is the MCP tool list as plain objects (`name`, `title`, `description`, zod
   `inputSchema` shape, `annotations`, `handler(client, args, { orgId })`) for embedding in another
   MCP server; `createFabplaneMcpServer()` builds a ready `McpServer`.
+- Bots: `startBotConnect`, `pollBotConnect`, `waitForBotConnect`, `getBotConnectRequest`, `approveBotConnect`,
+  `denyBotConnect`, `listBots`, `createBot`, `rotateBotToken`, `deleteBot`.
 - Photo queue: `listPhotoQueue`, `claimPhotoQueue`, `releasePhotoQueueItem`, `requeuePhotoQueueItem`;
   `uploadInventoryImage(orgId, itemId, image, { source, sourceUrl })`; `fetchImage(url)` downloads and
   validates an image, `imageFromBase64(data, contentType)` validates base64 input.

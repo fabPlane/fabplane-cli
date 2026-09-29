@@ -15,11 +15,13 @@ export type Env = Record<string, string | undefined>;
 
 export type Profile = {
   token: string;
-  /** `device` = `fpd_…` from the browser login; `api` = `fpk_…` personal token. */
-  tokenKind?: "device" | "api";
+  /** `device` = `fpd_…` from the browser login; `api` = `fpk_…` personal token; `bot` = `fpb_…` bot token. */
+  tokenKind?: "device" | "api" | "bot";
   expiresAt?: string | null;
   defaultOrgId?: string;
   user?: { subject?: string; handle?: string; displayName?: string; email?: string | null };
+  /** Set when the credential is a bot token (`fabplane bot connect`). */
+  bot?: { id: string; name: string; orgId: string; orgSlug?: string; orgName?: string; agentKind?: string | null; role?: string };
   savedAt?: string;
 };
 
@@ -46,8 +48,9 @@ export function credentialsPath(env: Env = process.env, platform: NodeJS.Platfor
   return join(configDir(env, platform), "credentials.json");
 }
 
-export function tokenKindOf(token: string): "device" | "api" | undefined {
+export function tokenKindOf(token: string): "device" | "api" | "bot" | undefined {
   if (token.startsWith("fpk_")) return "api";
+  if (token.startsWith("fpb_")) return "bot";
   if (token.startsWith("fpd_")) return "device";
   return undefined;
 }

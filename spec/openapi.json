@@ -34,6 +34,9 @@
     },
     {
       "name": "inventory"
+    },
+    {
+      "name": "bots"
     }
   ],
   "paths": {
@@ -3487,6 +3490,720 @@
           }
         }
       }
+    },
+    "/v1/auth/bot/connect": {
+      "post": {
+        "operationId": "startBotConnect",
+        "summary": "Start a bot connect request (anonymous)",
+        "tags": [
+          "bots"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "clientId": {
+                    "type": "string"
+                  },
+                  "org": {
+                    "type": "string"
+                  },
+                  "agentKind": {
+                    "type": "string",
+                    "enum": [
+                      "openclaw",
+                      "hermes",
+                      "fabdesk",
+                      "ci",
+                      "other"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "clientId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectCode": {
+                      "type": "string"
+                    },
+                    "userCode": {
+                      "type": "string"
+                    },
+                    "verificationUri": {
+                      "type": "string"
+                    },
+                    "verificationUriComplete": {
+                      "type": "string"
+                    },
+                    "expiresIn": {
+                      "type": "integer"
+                    },
+                    "interval": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "connectCode",
+                    "userCode",
+                    "verificationUri",
+                    "verificationUriComplete",
+                    "expiresIn",
+                    "interval"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          }
+        }
+      }
+    },
+    "/v1/auth/bot/token": {
+      "post": {
+        "operationId": "pollBotConnect",
+        "summary": "Poll a bot connect request (anonymous)",
+        "tags": [
+          "bots"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "connectCode": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "connectCode"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accessToken": {
+                      "type": "string",
+                      "pattern": "^fpb_"
+                    },
+                    "tokenType": {
+                      "type": "string"
+                    },
+                    "bot": {
+                      "$ref": "#/components/schemas/Bot"
+                    },
+                    "org": {
+                      "$ref": "#/components/schemas/OrgSummary"
+                    }
+                  },
+                  "required": [
+                    "accessToken",
+                    "tokenType",
+                    "bot",
+                    "org"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "428": {
+            "description": "authorization_pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "slow_down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/private/bots/connect/{userCode}": {
+      "get": {
+        "operationId": "getBotConnectRequest",
+        "summary": "Show a pending connect request",
+        "tags": [
+          "bots"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userCode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "request": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "agentKind": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "requestedOrgSlug": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "approved",
+                            "denied",
+                            "expired"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "agentKind",
+                        "requestedOrgSlug",
+                        "expiresAt",
+                        "status"
+                      ]
+                    },
+                    "orgs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OrgSummary"
+                      }
+                    }
+                  },
+                  "required": [
+                    "request",
+                    "orgs"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          }
+        }
+      }
+    },
+    "/v1/private/bots/connect/{userCode}/approve": {
+      "post": {
+        "operationId": "approveBotConnect",
+        "summary": "Approve a connect request into an org (admin)",
+        "tags": [
+          "bots"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userCode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "orgId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "member",
+                      "admin"
+                    ],
+                    "default": "member"
+                  }
+                },
+                "required": [
+                  "orgId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bot": {
+                      "$ref": "#/components/schemas/Bot"
+                    }
+                  },
+                  "required": [
+                    "bot"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          }
+        }
+      }
+    },
+    "/v1/private/bots/connect/{userCode}/deny": {
+      "post": {
+        "operationId": "denyBotConnect",
+        "summary": "Deny a connect request",
+        "tags": [
+          "bots"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userCode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          }
+        }
+      }
+    },
+    "/v1/private/orgs/{orgId}/bots": {
+      "get": {
+        "operationId": "listBots",
+        "summary": "List the org's bots (admin)",
+        "tags": [
+          "bots"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bots": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Bot"
+                      }
+                    }
+                  },
+                  "required": [
+                    "bots"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createBot",
+        "summary": "Create a bot; the token is shown once (admin)",
+        "tags": [
+          "bots"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "member",
+                      "admin"
+                    ]
+                  },
+                  "agentKind": {
+                    "type": "string",
+                    "enum": [
+                      "openclaw",
+                      "hermes",
+                      "fabdesk",
+                      "ci",
+                      "other"
+                    ]
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bot": {
+                      "$ref": "#/components/schemas/Bot"
+                    },
+                    "token": {
+                      "type": "string",
+                      "pattern": "^fpb_"
+                    }
+                  },
+                  "required": [
+                    "bot",
+                    "token"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          }
+        }
+      }
+    },
+    "/v1/private/orgs/{orgId}/bots/{botId}/tokens": {
+      "post": {
+        "operationId": "rotateBotToken",
+        "summary": "Issue a new token, revoking previous ones (admin)",
+        "tags": [
+          "bots"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "botId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string",
+                      "pattern": "^fpb_"
+                    }
+                  },
+                  "required": [
+                    "token"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          }
+        }
+      }
+    },
+    "/v1/private/orgs/{orgId}/bots/{botId}": {
+      "delete": {
+        "operationId": "deleteBot",
+        "summary": "Remove a bot and revoke its tokens (admin)",
+        "tags": [
+          "bots"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "botId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3634,6 +4351,16 @@
           "personalOrgId": {
             "type": "string",
             "format": "uuid"
+          },
+          "bot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Bot"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3807,6 +4534,13 @@
           "joinedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "human",
+              "bot"
+            ]
           }
         },
         "required": [
@@ -4719,6 +5453,64 @@
             ]
           }
         ]
+      },
+      "Bot": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "agentKind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member"
+            ]
+          },
+          "createdBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastUsedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "name",
+          "agentKind",
+          "role",
+          "createdBy",
+          "createdAt",
+          "lastUsedAt"
+        ],
+        "additionalProperties": false
       }
     }
   }
