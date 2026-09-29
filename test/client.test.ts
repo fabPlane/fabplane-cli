@@ -69,6 +69,10 @@ const cases: Array<[string, (c: FabplaneClient) => Promise<unknown>, string, str
   ["uploadInventoryImage", (c) => c.uploadInventoryImage(O, I, { data: new Uint8Array([1, 2, 3]), contentType: "image/png" }), "POST", `/v1/private/orgs/${O}/inventory/${I}/images`],
   ["getInventoryImage", (c) => c.getInventoryImage(O, I, "img1"), "GET", `/v1/private/orgs/${O}/inventory/${I}/images/img1`],
   ["deleteInventoryImage", (c) => c.deleteInventoryImage(O, I, "img1"), "DELETE", `/v1/private/orgs/${O}/inventory/${I}/images/img1`],
+  ["listPhotoQueue", (c) => c.listPhotoQueue(O, { include: "all", limit: 20 }), "GET", `/v1/private/orgs/${O}/inventory/photo-queue?include=all&limit=20`],
+  ["claimPhotoQueue", (c) => c.claimPhotoQueue(O, { limit: 3, leaseSeconds: 600, worker: "openclaw" }), "POST", `/v1/private/orgs/${O}/inventory/photo-queue/claim`, { limit: 3, leaseSeconds: 600, worker: "openclaw" }],
+  ["releasePhotoQueueItem", (c) => c.releasePhotoQueueItem(O, I, { outcome: "not_found", note: "no image online" }), "POST", `/v1/private/orgs/${O}/inventory/${I}/photo-queue/release`, { outcome: "not_found", note: "no image online" }],
+  ["requeuePhotoQueueItem", (c) => c.requeuePhotoQueueItem(O, I), "POST", `/v1/private/orgs/${O}/inventory/${I}/photo-queue/requeue`],
   // Existing endpoints.
   ["me", (c) => c.me(), "GET", "/v1/auth/me"],
   ["logout", (c) => c.logout(), "DELETE", "/v1/auth/session"],
@@ -97,7 +101,7 @@ describe("FabplaneClient request shapes", () => {
   }
 
   it("covers every documented operation plus the pre-contract endpoints", () => {
-    assert.ok(cases.length >= 42 + 8);
+    assert.ok(cases.length >= 46 + 8);
   });
 });
 
@@ -180,6 +184,15 @@ describe("multipart uploads", () => {
     assert.equal(images[0]!.size, 4);
     assert.equal(images[1]!.name, "image-2.jpg");
     assert.equal(images[1]!.type, "image/jpeg");
+  });
+
+  it("uploadInventoryImage sends source and sourceUrl fields", async () => {
+    const { calls, fetch } = recorder(() => json({ image: { id: "img" } }, 201));
+    await new FabplaneClient({ token: "t", fetch }).uploadInventoryImage("o", "i", { data: new Uint8Array([1]), contentType: "image/png" }, { source: "web", sourceUrl: "https://www.example.com/p/1" });
+    const form = calls[0]!.rawBody as FormData;
+    assert.equal(form.get("source"), "web");
+    assert.equal(form.get("sourceUrl"), "https://www.example.com/p/1");
+    assert.ok(form.get("image"));
   });
 
   it("uploadInventoryImage sends one image field", async () => {

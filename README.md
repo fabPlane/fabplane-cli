@@ -94,6 +94,11 @@ Every command accepts `--json` (machine output), `--org <id|slug>` and `--origin
 | `inventory import <file.jsonl\|->  [--source S]` | Bulk upsert, 500 items per request, keyed by `externalId` |
 | `inventory adjust <id> <delta> [--reason r]` | Atomic stock change, e.g. `-5` |
 | `inventory delete <id>` | Delete an item and its images |
+| `inventory photos queue [--all] [--limit n] [--cursor c]` | Items still waiting for a photo, with queue counts |
+| `inventory photos claim [--limit N] [--lease SECONDS] [--worker NAME]` | Lease items to find photos for (default 5 for 900 s) |
+| `inventory photos attach <itemId> (--url IMAGE_URL \| --file PATH) [--source-url PAGE_URL] [--source web]` | Download or read a photo, check it, upload it |
+| `inventory photos skip <itemId> [--note T]` / `photos retry <itemId>` | Give up on an item (leaves the queue) or hand it back |
+| `inventory photos requeue <itemId>` | Put a skipped item back in the queue (admin) |
 | `mcp [--desktop]` | Run the stdio MCP server |
 | `desktop status` / `desktop projects` / `desktop tools` | The local fabPlane desktop app |
 | `desktop call <tool> [json-args] [--project ID] [--sync]` | Call a desktop tool |
@@ -149,6 +154,81 @@ fabplane inventory import parts.jsonl --source my-scanner
 
 Rows without an `externalId` get one derived from name, MPN, manufacturer, SKU and location.
 
+## Photo backfill
+
+Inventory items without an image form the org's **photo queue**. Filling it is client-side work:
+a worker (a script with a local model, an agent through the MCP tools, or you on the command line)
+identifies each part, finds a product photo on the web, and uploads it. The server stores what it is
+given and runs no AI (`serverAiProcessing` still answers 501).
+
+How the queue works:
+
+- An item is **queued** while it has no images and has not been skipped. Uploading an image removes
+  it; deleting its last image puts it back.
+- `photos claim` **leases** items (1–25, default 5) for a while (60–3600 s, default 900) and counts an
+  attempt. Leased items are hidden from other workers, so several workers can run at once. Items with
+  the fewest attempts, then the oldest, come first.
+- A lease ends when you **attach** a photo, **retry** (hand the item back, still queued), **skip**
+  (`not_found`: no photo exists; the item leaves the queue with your note), or when it expires.
+- An admin can **requeue** a skipped item.
+
+`photos attach --url` downloads the image on your machine. It follows redirects, gives up after 20 s
+(change with `--timeout <seconds>`), refuses anything over 10 MiB, and accepts only png, jpeg, webp,
+gif, heic or heif. The check reads the file's leading bytes, falling back to an `image/*` content type
+when the bytes are inconclusive. The upload is tagged `source: web`, with `sourceUrl` set to
+`--source-url` (the product page) or, by default, the image URL. `--file` uploads a local photo
+tagged `source: user`.
+
+An example worker loop in shell. `find-photo` stands in for your local model or search step: it
+prints an image URL and the page it came from, or fails when there is no photo:
+
+```sh
+while :; do
+  items=$(fabplane inventory photos claim --limit 5 --worker "$(hostname)-photos" --json)
+  [ "$(echo "$items" | jq '.items | length')" = 0 ] && break
+  echo "$items" | jq -c '.items[]' | while read -r item; do
+    id=$(echo "$item" | jq -r .id)
+    if found=$(find-photo "$item"); then          # e.g. "https://…/part.jpg https://…/product-page"
+      set -- $found
+      fabplane inventory photos attach "$id" --url "$1" --source-url "$2" \
+        || fabplane inventory photos retry "$id" --note "upload failed"
+    else
+      fabplane inventory photos skip "$id" --note "no product photo found"
+    fi
+  done
+done
+```
+
+The same loop in TypeScript:
+
+```ts
+import { FabplaneClient, fetchImage, resolveDefaultOrg } from "fabplane-cli";
+
+const client = new FabplaneClient({ token: process.env.FABPLANE_TOKEN });
+const orgId = await resolveDefaultOrg(client);
+for (;;) {
+  const { items } = await client.claimPhotoQueue(orgId, { limit: 5, worker: "photo-bot" });
+  if (items.length === 0) break;
+  for (const item of items) {
+    const hit = await findPhoto(item); // your local model/search: { imageUrl, pageUrl } | null
+    if (!hit) {
+      await client.releasePhotoQueueItem(orgId, item.id, { outcome: "not_found", note: "no photo found" });
+      continue;
+    }
+    try {
+      const { image } = await fetchImage(hit.imageUrl); // redirects, 10 MiB cap, type check, timeout
+      await client.uploadInventoryImage(orgId, item.id, image, { source: "web", sourceUrl: hit.pageUrl });
+    } catch (err) {
+      await client.releasePhotoQueueItem(orgId, item.id, { outcome: "retry", note: String(err).slice(0, 500) });
+    }
+  }
+}
+```
+
+Agents get the same flow through the MCP tools: `inventory_photo_claim`, then either
+`inventory_photo_attach` (`imageUrl`, or base64 `data` with `contentType`, plus `sourceUrl`) or
+`inventory_photo_release`.
+
 ## MCP server
 
 `fabplane mcp` serves these tools over stdio. They act on your default org unless the agent passes
@@ -161,6 +241,8 @@ Rows without an `externalId` get one derived from name, MPN, manufacturer, SKU a
 | `cart_list`, `cart_get`, `cart_create` | Find, read and create carts (by repo or project id) |
 | `cart_add_items`, `cart_update_item`, `cart_remove_item` | Edit cart items |
 | `inventory_search`, `inventory_add`, `inventory_adjust` | Search, add and count stock |
+| `inventory_photo_queue`, `inventory_photo_claim` | See and lease items that need a photo |
+| `inventory_photo_attach`, `inventory_photo_release` | Attach a found photo (URL or base64), or skip/retry |
 
 `fabplane mcp --desktop` also exposes `desktop_status`, `desktop_projects` and `desktop_call_tool`,
 which reach the fabPlane desktop app running on the same machine.
@@ -231,6 +313,9 @@ console.log(dashboardUrlFor(client.origin)); // https://app.fabplane.com/dashboa
 - `fabplaneTools` is the MCP tool list as plain objects (`name`, `title`, `description`, zod
   `inputSchema` shape, `annotations`, `handler(client, args, { orgId })`) for embedding in another
   MCP server; `createFabplaneMcpServer()` builds a ready `McpServer`.
+- Photo queue: `listPhotoQueue`, `claimPhotoQueue`, `releasePhotoQueueItem`, `requeuePhotoQueueItem`;
+  `uploadInventoryImage(orgId, itemId, image, { source, sourceUrl })`; `fetchImage(url)` downloads and
+  validates an image, `imageFromBase64(data, contentType)` validates base64 input.
 - `CredentialStore` and `resolveAuth()` read and write the same credentials file as the CLI.
 
 ### The desktop app

@@ -73,6 +73,65 @@ export function seedState(): FakeState {
   return state;
 }
 
+export function freshPhotoSearch(): Json {
+  return { status: "queued", attempts: 0, note: null, leaseUntil: null, leaseOwner: null };
+}
+
+/** 1x1 PNG. */
+export const PNG_BYTES = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+export const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xff, 0xd9]);
+
+/** Test images for the photo-attach download path. */
+function serveImage(name: string, res: ServerResponse): void {
+  switch (name) {
+    case "part.png":
+      res.writeHead(200, { "content-type": "image/png", "content-length": String(PNG_BYTES.length) });
+      res.end(PNG_BYTES);
+      return;
+    case "redirect":
+      res.writeHead(302, { location: "/img/part.png" });
+      res.end();
+      return;
+    case "octet":
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      res.end(JPEG_BYTES);
+      return;
+    case "page.html":
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<html>not an image</html>");
+      return;
+    case "big-declared":
+      res.writeHead(200, { "content-type": "image/png", "content-length": String(11 * 1024 * 1024) });
+      res.end();
+      return;
+    case "big-streamed": {
+      res.writeHead(200, { "content-type": "image/png" });
+      const chunk = Buffer.alloc(1024 * 1024);
+      PNG_BYTES.copy(chunk);
+      let sent = 0;
+      const pump = () => {
+        while (sent < 11) {
+          sent++;
+          if (!res.write(chunk)) return void res.once("drain", pump);
+        }
+        res.end();
+      };
+      res.on("error", () => undefined);
+      pump();
+      return;
+    }
+    case "slow":
+      res.writeHead(200, { "content-type": "image/png" });
+      res.write(PNG_BYTES.subarray(0, 8));
+      setTimeout(() => res.end(), 3000).unref();
+      return;
+    case "missing":
+    default:
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("nope");
+  }
+}
+
 function send(res: ServerResponse, status: number, body?: unknown, headers: Record<string, string> = {}): void {
   if (status === 204 || body === undefined) {
     res.writeHead(status, headers);
@@ -128,6 +187,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
     /* ---- public ---- */
     if (p === "/v1/public/openapi.json") return err(res, 404, "not_found");
     if (p === "/v1/config") return send(res, 200, { relayUrl: "wss://relay.example.test" });
+    if (p.startsWith("/img/")) return serveImage(p.slice(5), res);
     if (p === "/v1/public/catalog") return send(res, 200, { projects: [{ id: "x/y", q: url.searchParams.get("q") }] });
 
     /* ---- device flow ---- */
@@ -427,7 +487,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
           Object.assign(existing, input, { updatedAt: now() });
           return { item: existing, created: false };
         }
-        const item = { quantity: 0, unit: "pcs", tags: [], attributes: {}, ...input, id: randomUUID(), orgId, images: [] as Json[], createdBy: uid, createdAt: now(), updatedAt: now() };
+        const item = { quantity: 0, unit: "pcs", tags: [], attributes: {}, ...input, id: randomUUID(), orgId, images: [] as Json[], photoSearch: freshPhotoSearch(), createdBy: uid, createdAt: now(), updatedAt: now() };
         state.inventory.set(item.id, item);
         return { item, created: true };
       };
@@ -456,6 +516,34 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
           if ((e as { ai?: boolean }).ai) return err(res, 501, "server_ai_unavailable", AI_MESSAGE);
           throw e;
         }
+      }
+      const inQueue = (i: Json) => i["orgId"] === orgId && i["images"].length === 0 && i["photoSearch"].status === "queued";
+      const leased = (i: Json) => i["photoSearch"].leaseUntil !== null && Date.parse(i["photoSearch"].leaseUntil) > Date.now();
+      const queueView = (i: Json) => {
+        const out: Json = { id: i["id"], name: i["name"], attributes: i["attributes"], tags: i["tags"], photoSearch: { ...i["photoSearch"] } };
+        for (const k of ["mpn", "manufacturer", "sku", "category", "description"]) if (i[k] !== undefined) out[k] = i[k];
+        return out;
+      };
+      if (seg[3] === "photo-queue" && seg.length === 4 && method === "GET") {
+        const all = [...state.inventory.values()].filter((i) => i["orgId"] === orgId);
+        const queued = all.filter(inQueue);
+        const counts = { queued: queued.length, available: queued.filter((i) => !leased(i)).length, leased: queued.filter(leased).length, skipped: all.filter((i) => i["photoSearch"].status === "skipped").length };
+        const list = url.searchParams.get("include") === "all" ? queued : queued.filter((i) => !leased(i));
+        const limit = Number(url.searchParams.get("limit") ?? 50);
+        const cursor = Number(url.searchParams.get("cursor") ?? 0);
+        return send(res, 200, { items: list.slice(cursor, cursor + limit).map(queueView), nextCursor: cursor + limit < list.length ? String(cursor + limit) : null, counts });
+      }
+      if (seg[3] === "photo-queue" && seg[4] === "claim" && method === "POST") {
+        const limit = body?.limit ?? 5;
+        const leaseSeconds = body?.leaseSeconds ?? 900;
+        if (limit < 1 || limit > 25 || leaseSeconds < 60 || leaseSeconds > 3600) return err(res, 400, "invalid_request");
+        const leaseUntil = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+        const picked = [...state.inventory.values()]
+          .filter((i) => inQueue(i) && !leased(i))
+          .sort((a, b) => a["photoSearch"].attempts - b["photoSearch"].attempts || a["createdAt"].localeCompare(b["createdAt"]))
+          .slice(0, limit);
+        for (const i of picked) Object.assign(i["photoSearch"], { leaseUntil, leaseOwner: body?.worker ?? null, attempts: i["photoSearch"].attempts + 1 });
+        return send(res, 200, { items: picked.map(queueView), leaseUntil });
       }
       if (seg[3] === "bulk" && method === "POST") {
         const items = body?.items;
@@ -494,11 +582,29 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
         item["quantity"] += body.delta;
         return send(res, 200, { item: view(item) });
       }
+      if (seg[4] === "photo-queue" && method === "POST") {
+        if (seg[5] === "release") {
+          if (body?.outcome !== "retry" && body?.outcome !== "not_found") return err(res, 400, "invalid_request");
+          Object.assign(item["photoSearch"], { leaseUntil: null, leaseOwner: null, ...(body.note !== undefined ? { note: body.note } : {}) });
+          if (body.outcome === "not_found") item["photoSearch"].status = "skipped";
+          return send(res, 200, { item: queueView(item) });
+        }
+        if (seg[5] === "requeue") {
+          if (!isAdmin) return err(res, 403, "forbidden");
+          item["photoSearch"] = freshPhotoSearch();
+          return send(res, 200, { item: queueView(item) });
+        }
+      }
       if (seg[4] === "images") {
         if (seg.length === 5 && method === "POST") {
           const f = form?.get("image");
           if (!f || typeof f === "string") return err(res, 415, "unsupported_media_type");
-          const image = { id: randomUUID(), contentType: f.type, bytes: f.size, url: `${origin}/signed/${f.name}`, createdAt: now() };
+          const source = form?.get("source");
+          const sourceUrl = form?.get("sourceUrl");
+          if (typeof sourceUrl === "string" && (!/^https?:\/\//.test(sourceUrl) || sourceUrl.length > 2000)) return err(res, 400, "invalid_request", "sourceUrl must be an http(s) URL");
+          if (item["images"].length >= 10) return err(res, 409, "conflict", "too many images");
+          const image = { id: randomUUID(), contentType: f.type, bytes: f.size, url: `${origin}/signed/${f.name}`, createdAt: now(), ...(typeof source === "string" ? { source } : {}), ...(typeof sourceUrl === "string" ? { sourceUrl } : {}) };
+          Object.assign(item["photoSearch"], { leaseUntil: null, leaseOwner: null });
           item["images"].push(image);
           return send(res, 201, { image });
         }
@@ -507,6 +613,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
         if (method === "GET") return send(res, 302, undefined, { location: `https://storage.example.test/${img["id"]}?sig=abc` });
         if (method === "DELETE") {
           item["images"].splice(item["images"].indexOf(img), 1);
+          if (item["images"].length === 0) item["photoSearch"].status = "queued";
           return send(res, 204);
         }
       }

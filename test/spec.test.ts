@@ -28,7 +28,7 @@ const specOps = Object.entries(spec.paths).flatMap(([path, item]) =>
 describe("spec coverage", () => {
   it("spec/openapi.json is OpenAPI 3.1 with operations", () => {
     assert.match(spec.openapi, /^3\.1/);
-    assert.ok(specOps.length >= 42);
+    assert.ok(specOps.length >= 46);
   });
 
   it("every operationId in spec/openapi.json has a FabplaneClient method", () => {
@@ -49,7 +49,7 @@ describe("spec coverage", () => {
   it("the contract's MCP tool names are all present", () => {
     assert.deepEqual(
       fabplaneTools.map((t) => t.name),
-      ["org_list", "destination_list", "cart_list", "cart_get", "cart_create", "cart_add_items", "cart_update_item", "cart_remove_item", "inventory_search", "inventory_add", "inventory_adjust"],
+      ["org_list", "destination_list", "cart_list", "cart_get", "cart_create", "cart_add_items", "cart_update_item", "cart_remove_item", "inventory_search", "inventory_add", "inventory_adjust", "inventory_photo_queue", "inventory_photo_claim", "inventory_photo_attach", "inventory_photo_release"],
     );
     for (const t of fabplaneTools) assert.match(t.name, /^[a-z][a-z0-9_]*$/);
   });

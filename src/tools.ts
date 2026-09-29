@@ -7,7 +7,8 @@ import { z } from "zod/v4";
 import type { FabplaneClient } from "./client.js";
 import { FabplaneApiError } from "./errors.js";
 import { FabdeskError, type FabdeskClient } from "./fabdesk.js";
-import type { CartItemInput, InventoryItemInput } from "./types.js";
+import { fetchImage, imageFromBase64 } from "./images.js";
+import type { CartItemInput, ImageUpload, InventoryItemInput, PhotoQueueItem } from "./types.js";
 
 export type ToolResult = { text?: string; json?: unknown; isError?: boolean };
 export type ToolContext = { orgId?: string | undefined };
@@ -102,6 +103,12 @@ const attributesArg = z
   .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
   .optional()
   .describe('Semi-structured fields (≤100 keys), e.g. {"resistance":"10k","tolerance":"1%","package":"0603"}.');
+
+function describeQueueItem(i: PhotoQueueItem): string {
+  const id = [i.manufacturer, i.mpn].filter(Boolean).join(" ");
+  const lease = i.photoSearch.leaseUntil ? `, leased by ${i.photoSearch.leaseOwner ?? "?"} until ${i.photoSearch.leaseUntil}` : "";
+  return `- ${i.id}: ${i.name}${id ? ` (${id})` : ""}${i.category ? ` [${i.category}]` : ""} attempts=${i.photoSearch.attempts}${lease}`;
+}
 
 function summarizeCart(cart: { id: string; name: string; itemCount?: number; items?: unknown[] }): string {
   const count = cart.items ? cart.items.length : cart.itemCount ?? 0;
@@ -313,6 +320,95 @@ export const fabplaneTools: FabplaneTool[] = [
       guarded(async () => {
         const { item } = await client.adjustInventory(orgOf(args, ctx), args.itemId, args.delta, args.reason);
         return { text: `${item.name}: quantity now ${item.quantity} ${item.unit}`, json: { item } };
+      }),
+  }),
+  defineTool({
+    name: "inventory_photo_queue",
+    title: "Inventory photo queue",
+    description:
+      "Show the org's inventory photo queue: items that have no image yet and were not skipped, with counts (queued, available, leased, skipped). Use it to see how much photo backfill is left. To work on items, call inventory_photo_claim instead so two workers do not pick the same item.",
+    inputSchema: {
+      orgId: orgIdArg,
+      include: z.enum(["available", "all"]).optional().describe('"available" (default) hides items another worker has leased; "all" includes them.'),
+      limit: z.number().int().min(1).max(200).optional(),
+      cursor: z.string().optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    handler: (client, args, ctx) =>
+      guarded(async () => {
+        const { orgId, ...query } = args;
+        const res = await client.listPhotoQueue(orgOf({ orgId }, ctx), compact(query));
+        const c = res.counts;
+        return {
+          text: `Photo queue: ${c.queued} queued, ${c.available} available, ${c.leased} leased, ${c.skipped} skipped.\n${res.items.map(describeQueueItem).join("\n")}${res.nextCursor ? `\nMore: cursor=${res.nextCursor}` : ""}`,
+          json: res,
+        };
+      }),
+  }),
+  defineTool({
+    name: "inventory_photo_claim",
+    title: "Claim items needing photos",
+    description:
+      "Lease up to `limit` inventory items (1–25, default 5) that need a product photo, for `leaseSeconds` (60–3600, default 900). Claimed items are hidden from other workers until the lease ends. For each item, find a real product photo yourself (search by mpn/manufacturer/name; prefer the manufacturer's or a distributor's product image), then call inventory_photo_attach, or inventory_photo_release with outcome \"not_found\" if there is none, or \"retry\" to hand it back. Identify the item from its fields; the server does no AI work.",
+    inputSchema: {
+      orgId: orgIdArg,
+      limit: z.number().int().min(1).max(25).optional(),
+      leaseSeconds: z.number().int().min(60).max(3600).optional(),
+      worker: z.string().max(80).optional().describe("Name of this worker, shown as the lease owner."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    handler: (client, args, ctx) =>
+      guarded(async () => {
+        const { orgId, ...body } = args;
+        const res = await client.claimPhotoQueue(orgOf({ orgId }, ctx), compact(body));
+        return {
+          text: res.items.length ? `Leased ${res.items.length} item(s) until ${res.leaseUntil}:\n${res.items.map(describeQueueItem).join("\n")}` : "The photo queue is empty.",
+          json: res,
+        };
+      }),
+  }),
+  defineTool({
+    name: "inventory_photo_attach",
+    title: "Attach a photo to an inventory item",
+    description:
+      "Upload a product photo for an inventory item. Pass `imageUrl` (a direct link to the image file; it is downloaded here, redirects followed, and must be a png/jpeg/webp/gif/heic image of at most 10 MiB) or `data` (base64) with `contentType`. Set `sourceUrl` to the page where you found it (defaults to imageUrl). Attaching takes the item out of the photo queue.",
+    inputSchema: {
+      orgId: orgIdArg,
+      itemId: z.string(),
+      imageUrl: z.string().url().optional().describe("Direct http(s) URL of the image file."),
+      data: z.string().optional().describe("Base64 image bytes (or a data: URL), instead of imageUrl."),
+      contentType: z.string().optional().describe("Media type of `data`, e.g. image/jpeg."),
+      sourceUrl: z.string().url().max(2000).optional().describe("Product page the photo came from."),
+      source: z.string().optional().describe('Defaults to "web".'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    handler: (client, args, ctx) =>
+      guarded(async () => {
+        if (!args.imageUrl === !args.data) return { isError: true, text: "Pass exactly one of imageUrl or data (base64)." };
+        let image: ImageUpload;
+        if (args.imageUrl) image = (await fetchImage(args.imageUrl, { fetch: client.fetcher })).image;
+        else image = imageFromBase64(args.data!, args.contentType);
+        const sourceUrl = args.sourceUrl ?? args.imageUrl;
+        const res = await client.uploadInventoryImage(orgOf(args, ctx), args.itemId, image, compact({ source: args.source ?? "web", sourceUrl }));
+        return { text: `Attached ${res.image.contentType} (${res.image.bytes} bytes) to item ${args.itemId}.`, json: res };
+      }),
+  }),
+  defineTool({
+    name: "inventory_photo_release",
+    title: "Release a claimed photo-queue item",
+    description:
+      "Hand back an item you claimed with inventory_photo_claim without attaching a photo. outcome \"retry\": it stays in the queue for a later attempt (e.g. search failed transiently). outcome \"not_found\": no suitable photo exists; the item is marked skipped and leaves the queue. Add a short `note` saying what you tried.",
+    inputSchema: {
+      orgId: orgIdArg,
+      itemId: z.string(),
+      outcome: z.enum(["retry", "not_found"]),
+      note: z.string().max(500).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    handler: (client, args, ctx) =>
+      guarded(async () => {
+        const { item } = await client.releasePhotoQueueItem(orgOf(args, ctx), args.itemId, compact({ outcome: args.outcome, note: args.note }));
+        return { text: args.outcome === "not_found" ? `Skipped ${item.name}; it left the photo queue.` : `Released ${item.name} back to the queue.`, json: { item } };
       }),
   }),
 ];

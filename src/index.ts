@@ -46,6 +46,7 @@ export {
 } from "./tools.js";
 export { createFabplaneMcpServer, runMcpStdio, toCallToolResult, MCP_INSTRUCTIONS, type FabplaneMcpOptions } from "./mcp.js";
 export { runCli, helpText, type CliIo } from "./cli/run.js";
+export { DEFAULT_IMAGE_TIMEOUT_MS, IMAGE_CONTENT_TYPES, ImageFetchError, MAX_IMAGE_BYTES, fetchImage, imageFromBase64, sniffImageType, validateImage } from "./images.js";
 export { cartItemsFromCsv, cartItemsFromJson, parseCsv, parseJsonl } from "./csv.js";
 export { operations, type OperationInfo } from "./generated/operations.js";
 export { VERSION } from "./version.js";
