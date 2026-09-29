@@ -170,7 +170,8 @@ How the queue works:
   the fewest attempts, then the oldest, come first.
 - A lease ends when you **attach** a photo, **retry** (hand the item back, still queued), **skip**
   (`not_found`: no photo exists; the item leaves the queue with your note), or when it expires.
-- An admin can **requeue** a skipped item.
+- An admin can **requeue** a skipped item. `photos queue --all` lists every item without a photo,
+  including leased and skipped ones.
 
 `photos attach --url` downloads the image on your machine. It follows redirects, gives up after 20 s
 (change with `--timeout <seconds>`), refuses anything over 10 MiB, and accepts only png, jpeg, webp,

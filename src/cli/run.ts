@@ -805,7 +805,7 @@ const commands: Record<string, Command> = {
   /* ---------- inventory photo queue ---------- */
   "inventory photos queue": {
     usage: "fabplane inventory photos queue [--all] [--limit N] [--cursor C]",
-    summary: "Items waiting for a photo (with queue counts)",
+    summary: "Items waiting for a photo, with counts (--all adds leased and skipped ones)",
     options: { all: { type: "boolean" }, limit: { type: "string" }, cursor: { type: "string" } },
     async run(ctx, _args, v) {
       const res = await (await ctx.client()).listPhotoQueue(
@@ -862,6 +862,7 @@ const commands: Record<string, Command> = {
         image = { data, contentType, filename: file!.split(/[\\/]/).pop() ?? "image" };
       }
       const source = str(v, "source") ?? (url ? "web" : "user");
+      if (source.length < 1 || source.length > 80) throw new UsageError("--source must be 1..80 characters");
       const finalSourceUrl = sourceUrl ?? fetchedFrom;
       const res = await (await ctx.client()).uploadInventoryImage(await ctx.orgId(), itemId, image, def({ source, sourceUrl: finalSourceUrl }));
       ctx.print(res, () => `Attached ${res.image.contentType} (${res.image.bytes} bytes) to ${itemId}${finalSourceUrl ? ` from ${finalSourceUrl}` : ""}.`);

@@ -546,6 +546,10 @@ describe("inventory photos", () => {
     assert.match(retry.stdout, /Released Photo E .* back to the queue \(attempts: \d+\)/);
     const releaseReq = api.requests.filter((r) => r.path.endsWith("/photo-queue/release")).at(-1)!;
     assert.deepEqual(releaseReq.body, { outcome: "retry" });
+    const withSkipped = await pc(["inventory", "photos", "queue", "--all", "--json"]);
+    assert.ok(withSkipped.json().items.some((i: { id: string; photoSearch: { status: string } }) => i.id === d && i.photoSearch.status === "skipped"), "--all lists skipped items");
+    assert.ok(!(await pc(["inventory", "photos", "queue", "--json"])).json().items.some((i: { id: string }) => i.id === d));
+    assert.equal((await pc(["inventory", "photos", "attach", e!, "--file", "shot.jpg", "--source", "x".repeat(81)])).code, 2);
     const requeue = await pc(["inventory", "photos", "requeue", d!]);
     assert.match(requeue.stdout, /Requeued Photo D/);
     assert.equal(api.state.inventory.get(d!)!["photoSearch"].status, "queued");

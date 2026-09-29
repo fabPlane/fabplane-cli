@@ -528,7 +528,8 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
         const all = [...state.inventory.values()].filter((i) => i["orgId"] === orgId);
         const queued = all.filter(inQueue);
         const counts = { queued: queued.length, available: queued.filter((i) => !leased(i)).length, leased: queued.filter(leased).length, skipped: all.filter((i) => i["photoSearch"].status === "skipped").length };
-        const list = url.searchParams.get("include") === "all" ? queued : queued.filter((i) => !leased(i));
+        // include=all: every imageless item, leased and skipped included (so skipped ones can be requeued).
+        const list = url.searchParams.get("include") === "all" ? all.filter((i) => i["images"].length === 0) : queued.filter((i) => !leased(i));
         const limit = Number(url.searchParams.get("limit") ?? 50);
         const cursor = Number(url.searchParams.get("cursor") ?? 0);
         return send(res, 200, { items: list.slice(cursor, cursor + limit).map(queueView), nextCursor: cursor + limit < list.length ? String(cursor + limit) : null, counts });

@@ -329,7 +329,7 @@ export const fabplaneTools: FabplaneTool[] = [
       "Show the org's inventory photo queue: items that have no image yet and were not skipped, with counts (queued, available, leased, skipped). Use it to see how much photo backfill is left. To work on items, call inventory_photo_claim instead so two workers do not pick the same item.",
     inputSchema: {
       orgId: orgIdArg,
-      include: z.enum(["available", "all"]).optional().describe('"available" (default) hides items another worker has leased; "all" includes them.'),
+      include: z.enum(["available", "all"]).optional().describe('"available" (default): items you could claim now. "all": every item without a photo, including ones leased by another worker and skipped ones (status "skipped").'),
       limit: z.number().int().min(1).max(200).optional(),
       cursor: z.string().optional(),
     },
@@ -379,7 +379,7 @@ export const fabplaneTools: FabplaneTool[] = [
       data: z.string().optional().describe("Base64 image bytes (or a data: URL), instead of imageUrl."),
       contentType: z.string().optional().describe("Media type of `data`, e.g. image/jpeg."),
       sourceUrl: z.string().url().max(2000).optional().describe("Product page the photo came from."),
-      source: z.string().optional().describe('Defaults to "web".'),
+      source: z.string().min(1).max(80).optional().describe('Defaults to "web".'),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     handler: (client, args, ctx) =>
