@@ -349,7 +349,7 @@ export const fabplaneTools: FabplaneTool[] = [
     name: "inventory_photo_claim",
     title: "Claim items needing photos",
     description:
-      "Lease up to `limit` inventory items (1–25, default 5) that need a product photo, for `leaseSeconds` (60–3600, default 900). Claimed items are hidden from other workers until the lease ends. For each item, find a real product photo yourself (search by mpn/manufacturer/name; prefer the manufacturer's or a distributor's product image), then call inventory_photo_attach, or inventory_photo_release with outcome \"not_found\" if there is none, or \"retry\" to hand it back. Identify the item from its fields; the server does no AI work.",
+      "Lease up to `limit` inventory items (1–25, default 5) that need a product photo, for `leaseSeconds` (60–3600, default 900). Claimed items are hidden from other workers until the lease ends. For each item, find a real product photo yourself (search by mpn/manufacturer/name; prefer the manufacturer's or a distributor's product image), then call inventory_photo_attach, or inventory_photo_release (with the item's leaseToken) with outcome \"not_found\" if there is none, or \"retry\" to hand it back. Identify the item from its fields; the server does no AI work.",
     inputSchema: {
       orgId: orgIdArg,
       limit: z.number().int().min(1).max(25).optional(),
@@ -362,7 +362,9 @@ export const fabplaneTools: FabplaneTool[] = [
         const { orgId, ...body } = args;
         const res = await client.claimPhotoQueue(orgOf({ orgId }, ctx), compact(body));
         return {
-          text: res.items.length ? `Leased ${res.items.length} item(s) until ${res.leaseUntil}:\n${res.items.map(describeQueueItem).join("\n")}` : "The photo queue is empty.",
+          text: res.items.length
+            ? `Leased ${res.items.length} item(s) until ${res.leaseUntil}. Pass each item's leaseToken to inventory_photo_release:\n${res.items.map((i) => `${describeQueueItem(i)} leaseToken=${i.leaseToken}`).join("\n")}`
+            : "The photo queue is empty.",
           json: res,
         };
       }),
@@ -397,17 +399,26 @@ export const fabplaneTools: FabplaneTool[] = [
     name: "inventory_photo_release",
     title: "Release a claimed photo-queue item",
     description:
-      "Hand back an item you claimed with inventory_photo_claim without attaching a photo. outcome \"retry\": it stays in the queue for a later attempt (e.g. search failed transiently). outcome \"not_found\": no suitable photo exists; the item is marked skipped and leaves the queue. Add a short `note` saying what you tried.",
+      "Hand back an item you claimed with inventory_photo_claim without attaching a photo. outcome \"retry\": it stays in the queue for a later attempt (e.g. search failed transiently). outcome \"not_found\": no suitable photo exists; the item is marked skipped and leaves the queue. Add a short `note` saying what you tried, and pass the `leaseToken` from inventory_photo_claim. If the answer says the lease was lost, another worker has the item now: leave it alone.",
     inputSchema: {
       orgId: orgIdArg,
       itemId: z.string(),
       outcome: z.enum(["retry", "not_found"]),
       note: z.string().max(500).optional(),
+      leaseToken: z.string().optional().describe("The item's leaseToken from inventory_photo_claim."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     handler: (client, args, ctx) =>
       guarded(async () => {
-        const { item } = await client.releasePhotoQueueItem(orgOf(args, ctx), args.itemId, compact({ outcome: args.outcome, note: args.note }));
+        let item: PhotoQueueItem;
+        try {
+          ({ item } = await client.releasePhotoQueueItem(orgOf(args, ctx), args.itemId, compact({ outcome: args.outcome, note: args.note, leaseToken: args.leaseToken })));
+        } catch (err) {
+          if (err instanceof FabplaneApiError && err.status === 409) {
+            return { isError: true, text: "lease lost: another worker reclaimed this item; leave it alone", json: { error: "lease_lost", status: 409 } };
+          }
+          throw err;
+        }
         return { text: args.outcome === "not_found" ? `Skipped ${item.name}; it left the photo queue.` : `Released ${item.name} back to the queue.`, json: { item } };
       }),
   }),

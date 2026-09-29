@@ -35,6 +35,7 @@ import type {
   PhotoQueueCounts,
   PhotoQueueItem,
   ReleasePhotoQueueInput,
+  ClaimedPhotoQueueItem,
   UploadImageOptions,
   Member,
   MeResponse,
@@ -429,12 +430,14 @@ export class FabplaneClient {
    * `POST /v1/private/orgs/:orgId/inventory/photo-queue/claim` [claimPhotoQueue]: atomically leases up
    * to `limit` items (1..25, default 5) for `leaseSeconds` (60..3600, default 900).
    */
-  claimPhotoQueue(orgId: string, body: ClaimPhotoQueueInput = {}): Promise<{ items: PhotoQueueItem[]; leaseUntil: string }> {
+  claimPhotoQueue(orgId: string, body: ClaimPhotoQueueInput = {}): Promise<{ items: ClaimedPhotoQueueItem[]; leaseUntil: string }> {
     return this.request("POST", `${this.inventoryPath(orgId)}/photo-queue/claim`, { json: body });
   }
   /**
    * `POST /v1/private/orgs/:orgId/inventory/:itemId/photo-queue/release` [releasePhotoQueueItem]:
-   * `retry` returns the item to the queue; `not_found` marks it skipped with the note.
+   * `retry` returns the item to the queue; `not_found` marks it skipped with the note. Pass the
+   * `leaseToken` from the claim: under an active lease a missing or wrong token is a 409 `conflict`
+   * (another worker reclaimed the item; leave it alone).
    */
   releasePhotoQueueItem(orgId: string, itemId: string, body: ReleasePhotoQueueInput): Promise<{ item: PhotoQueueItem }> {
     return this.request("POST", `${this.inventoryPath(orgId, itemId)}/photo-queue/release`, { json: body });

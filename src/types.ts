@@ -228,7 +228,13 @@ export type PhotoQueueCounts = { queued: number; available: number; leased: numb
 
 export type ListPhotoQueueQuery = { limit?: number; cursor?: string; include?: "available" | "all" };
 export type ClaimPhotoQueueInput = { limit?: number; leaseSeconds?: number; worker?: string };
-export type ReleasePhotoQueueInput = { outcome: "retry" | "not_found"; note?: string };
+/** A claimed item: `leaseToken` proves the lease and appears only in the claim response. */
+export type ClaimedPhotoQueueItem = PhotoQueueItem & { leaseToken: string };
+/**
+ * `leaseToken` from the claim. While the item is under an active lease, a missing or different token
+ * is answered with 409 `conflict` (the lease was reclaimed by another worker).
+ */
+export type ReleasePhotoQueueInput = { outcome: "retry" | "not_found"; note?: string; leaseToken?: string };
 export type UploadImageOptions = { source?: string; sourceUrl?: string };
 
 export type InventoryItem = Omit<InventoryItemInput, "serverAiProcessing" | "quantity" | "unit" | "tags" | "attributes"> & {

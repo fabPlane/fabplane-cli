@@ -3283,7 +3283,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/PhotoQueueItem"
+                        "$ref": "#/components/schemas/ClaimedPhotoQueueItem"
                       }
                     },
                     "leaseUntil": {
@@ -3366,6 +3366,11 @@
                   "note": {
                     "type": "string",
                     "maxLength": 500
+                  },
+                  "leaseToken": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "From the claim. Required while the item is under an active lease."
                   }
                 },
                 "required": [
@@ -3406,8 +3411,12 @@
           },
           "404": {
             "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
           }
-        }
+        },
+        "description": "While the item is under an active lease, a missing or different leaseToken is answered with 409 conflict (the lease was reclaimed by another worker)."
       }
     },
     "/v1/private/orgs/{orgId}/inventory/{itemId}/photo-queue/requeue": {
@@ -4690,6 +4699,26 @@
           "skipped"
         ],
         "additionalProperties": false
+      },
+      "ClaimedPhotoQueueItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PhotoQueueItem"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "leaseToken": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Proof of this claim; pass it to releasePhotoQueueItem. Only in the claim response."
+              }
+            },
+            "required": [
+              "leaseToken"
+            ]
+          }
+        ]
       }
     }
   }

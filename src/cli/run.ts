@@ -24,7 +24,7 @@ import { ImageFetchError, fetchImage, validateImage } from "../images.js";
 import { FabdeskClient, FabdeskError } from "../fabdesk.js";
 import { runMcpStdio, type FabplaneMcpOptions } from "../mcp.js";
 import { dashboardUrlFor } from "../origin.js";
-import type { AttributeValue, CartItemInput, ImageUpload, InventoryItemInput, PhotoQueueItem, Role } from "../types.js";
+import type { AttributeValue, CartItemInput, ImageUpload, InventoryItemInput, PhotoQueueItem, ReleasePhotoQueueInput, Role } from "../types.js";
 import { VERSION } from "../version.js";
 import { keyValues, table } from "./format.js";
 
@@ -833,7 +833,14 @@ const commands: Record<string, Command> = {
       if (limit !== undefined && (limit < 1 || limit > 25)) throw new UsageError("--limit must be 1..25");
       if (leaseSeconds !== undefined && (leaseSeconds < 60 || leaseSeconds > 3600)) throw new UsageError("--lease must be 60..3600 seconds");
       const res = await (await ctx.client()).claimPhotoQueue(await ctx.orgId(), def({ limit, leaseSeconds, worker: str(v, "worker") }));
-      ctx.print(res, () => (res.items.length ? `Leased ${res.items.length} item(s) until ${res.leaseUntil}:\n${photoTable(res.items)}` : "Nothing to claim: the photo queue is empty."));
+      ctx.print(res, () =>
+        res.items.length
+          ? `Leased ${res.items.length} item(s) until ${res.leaseUntil}. Pass each lease token to photos skip/retry:\n${table(
+              res.items.map((i) => ({ ...i, leaseToken: i.leaseToken, attempts: i.photoSearch.attempts })),
+              [["id", "id"], ["name", "name"], ["mpn", "mpn"], ["manufacturer", "mfr"], ["attempts", "tries"], ["leaseToken", "lease token"]],
+            )}`
+          : "Nothing to claim: the photo queue is empty.",
+      );
     },
   },
   "inventory photos attach": {
@@ -869,24 +876,24 @@ const commands: Record<string, Command> = {
     },
   },
   "inventory photos skip": {
-    usage: "fabplane inventory photos skip <itemId> [--note TEXT]",
+    usage: "fabplane inventory photos skip <itemId> [--note TEXT] [--lease-token T]",
     summary: "No photo can be found: take the item out of the queue",
-    options: { note: { type: "string" } },
+    options: { note: { type: "string" }, "lease-token": { type: "string" } },
     async run(ctx, args, v) {
       const itemId = need(args, 0, "itemId");
       const note = str(v, "note");
       if (note && note.length > 500) throw new UsageError("--note is longer than 500 characters");
-      const { item } = await (await ctx.client()).releasePhotoQueueItem(await ctx.orgId(), itemId, def({ outcome: "not_found" as const, note }));
+      const { item } = await releaseWithLease(ctx, itemId, def({ outcome: "not_found" as const, note, leaseToken: str(v, "lease-token") }));
       ctx.print({ item }, () => `Skipped ${item.name} (${item.id}); it left the photo queue.`);
     },
   },
   "inventory photos retry": {
-    usage: "fabplane inventory photos retry <itemId> [--note TEXT]",
+    usage: "fabplane inventory photos retry <itemId> [--note TEXT] [--lease-token T]",
     summary: "Give up the lease; the item stays queued for another attempt",
-    options: { note: { type: "string" } },
+    options: { note: { type: "string" }, "lease-token": { type: "string" } },
     async run(ctx, args, v) {
       const itemId = need(args, 0, "itemId");
-      const { item } = await (await ctx.client()).releasePhotoQueueItem(await ctx.orgId(), itemId, def({ outcome: "retry" as const, note: str(v, "note") }));
+      const { item } = await releaseWithLease(ctx, itemId, def({ outcome: "retry" as const, note: str(v, "note"), leaseToken: str(v, "lease-token") }));
       ctx.print({ item }, () => `Released ${item.name} (${item.id}) back to the queue (attempts: ${item.photoSearch.attempts}).`);
     },
   },
@@ -1011,6 +1018,20 @@ const commands: Record<string, Command> = {
 
 class SilentFailure extends Error {}
 
+export const LEASE_LOST_MESSAGE = "lease lost: another worker reclaimed this item; leave it alone";
+
+/** Raised when a release is refused with 409 because the lease belongs to someone else now. */
+class LeaseLostError extends Error {}
+
+async function releaseWithLease(ctx: Ctx, itemId: string, body: ReleasePhotoQueueInput): Promise<{ item: PhotoQueueItem }> {
+  try {
+    return await (await ctx.client()).releasePhotoQueueItem(await ctx.orgId(), itemId, body);
+  } catch (err) {
+    if (err instanceof FabplaneApiError && err.status === 409) throw new LeaseLostError(LEASE_LOST_MESSAGE);
+    throw err;
+  }
+}
+
 function photoTable(items: PhotoQueueItem[]): string {
   return table(
     items.map((i) => ({ ...i, status: i.photoSearch.status, attempts: i.photoSearch.attempts, lease: i.photoSearch.leaseUntil ? `${i.photoSearch.leaseOwner ?? "?"} until ${i.photoSearch.leaseUntil}` : "", note: i.photoSearch.note })),
@@ -1126,6 +1147,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof SilentFailure) return 1;
+    if (err instanceof LeaseLostError) return fail(1, err.message, { error: "lease_lost", status: 409 });
     if (err instanceof UsageError) return fail(2, `${err.message}${err.message.startsWith("Not logged in") ? "" : `\nUsage: ${command.usage}`}`, { error: "usage" });
     if (err instanceof FabplaneApiError) {
       if (err.code === "server_ai_unavailable" || err.status === 501) {
