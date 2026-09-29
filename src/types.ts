@@ -360,7 +360,8 @@ export type BotConnectToken = { accessToken: string; tokenType: string; bot: Bot
 
 export type BotConnectPollOutcome =
   | { status: "pending" }
-  | { status: "slow_down" }
+  /** `interval`: the server's new polling interval in seconds, when it sends one. */
+  | { status: "slow_down"; interval?: number }
   | { status: "token"; token: BotConnectToken }
   | { status: "error"; error: string; description?: string };
 

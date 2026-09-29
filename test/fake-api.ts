@@ -252,7 +252,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
       req0["polls"]++;
       // Scripted outcomes keyed on the bot name, so tests can drive every branch.
       const name = String(req0["name"]);
-      if (name.includes("slow") && req0["polls"] === 1) return send(res, 429, { error: "slow_down" });
+      if (name.includes("slow") && req0["polls"] === 1) return send(res, 429, { error: "slow_down", interval: 10 });
       if (name.includes("deny") && req0["polls"] >= 2) req0["status"] = "denied";
       if (name.includes("expire") && req0["polls"] >= 2) req0["status"] = "expired";
       if (req0["status"] === "pending" && !name.includes("manual") && !name.includes("deny") && !name.includes("expire") && req0["polls"] >= 2) {
@@ -304,7 +304,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
 
     const isBot = user["kind"] === "bot";
     if (seg[0] === "me" && seg.length === 1 && isBot) {
-      return send(res, 200, { principal: { subject: user["subject"], handle: user["handle"], displayName: user["displayName"], kind: "bot" }, bot: state.bots.get(uid), personalOrgId: null });
+      return send(res, 200, { principal: { subject: user["subject"], userId: uid, handle: user["handle"], displayName: user["displayName"], kind: "bot", botOrgId: user["botOrgId"] }, bot: state.bots.get(uid), email: null, emailVerified: false, personalOrgId: null });
     }
     if (isBot && ["tokens", "settings", "invites", "bots"].includes(seg[0] ?? "")) return err(res, 403, "forbidden");
     if (isBot && seg[0] === "orgs" && (seg.length === 1 ? method !== "GET" : seg[1] === "joinable" || seg[2] === "join" || seg[2] === "invites" || seg[2] === "bots")) return err(res, 403, "forbidden");

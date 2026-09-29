@@ -303,12 +303,12 @@ describe("bot connect polling", () => {
   });
 
   it("waitForBotConnect backs off on slow_down and reports denial clearly", async () => {
-    const answers = [json({ error: "authorization_pending" }, 428), json({ error: "slow_down" }, 429), json({ accessToken: "fpb_y", tokenType: "bearer", bot, org: { id: "o", slug: "s", name: "S", memberCount: 1 } })];
+    const answers = [json({ error: "authorization_pending" }, 428), json({ error: "slow_down" }, 429), json({ error: "slow_down", interval: 20 }, 429), json({ accessToken: "fpb_y", tokenType: "bearer", bot, org: { id: "o", slug: "s", name: "S", memberCount: 1 } })];
     const { fetch } = recorder(() => answers.shift()!);
     const sleeps: number[] = [];
     const token = await new FabplaneClient({ fetch }).waitForBotConnect(start, { sleep: async (ms) => void sleeps.push(ms) });
     assert.equal(token.accessToken, "fpb_y");
-    assert.deepEqual(sleeps, [5000, 5000, 10000]);
+    assert.deepEqual(sleeps, [5000, 5000, 10000, 20000], "+5 s without a hint, the server's interval with one");
     const denied = recorder(() => json({ error: "access_denied" }, 400));
     await assert.rejects(new FabplaneClient({ fetch: denied.fetch }).waitForBotConnect(start, { sleep: async () => {} }), /denied in the dashboard/);
   });

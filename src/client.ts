@@ -478,8 +478,11 @@ export class FabplaneClient {
     if ([400, 401, 403, 428, 429].includes(res.status)) {
       const err = await FabplaneApiError.fromResponse(res, "POST", path);
       if (err.code === "authorization_pending" || (res.status === 428 && err.code === "http_428")) return { status: "pending" };
-      if (err.code === "slow_down" || (res.status === 429 && err.code === "http_429")) return { status: "slow_down" };
       const b = err.body as Record<string, unknown> | undefined;
+      if (err.code === "slow_down" || (res.status === 429 && err.code === "http_429")) {
+        const next = b && typeof b["interval"] === "number" ? b["interval"] : undefined;
+        return next !== undefined ? { status: "slow_down", interval: next } : { status: "slow_down" };
+      }
       const description = b && typeof b["message"] === "string" ? b["message"] : undefined;
       return { status: "error", error: err.code, ...(description ? { description } : {}) };
     }
@@ -506,13 +509,15 @@ export class FabplaneClient {
       const outcome = await this.pollBotConnect(start.connectCode);
       opts.onPoll?.(outcome);
       if (outcome.status === "token") return outcome.token;
-      if (outcome.status === "slow_down") interval += 5;
+      if (outcome.status === "slow_down") interval = outcome.interval !== undefined ? Math.max(interval, outcome.interval) : interval + 5;
       if (outcome.status === "error") {
         const message =
           outcome.error === "access_denied"
             ? "The connect request was denied in the dashboard."
             : outcome.error === "expired_token"
               ? "The connect request expired (or its token was already collected). Run `fabplane bot connect` again."
+              : outcome.error === "rate_limited"
+                ? "Too many connect requests from this address; wait a minute and run `fabplane bot connect` again."
               : `Bot connect failed: ${outcome.description ?? outcome.error}`;
         throw new FabplaneApiError({ status: 400, code: outcome.error, message, body: outcome, method: "POST", path });
       }
@@ -743,7 +748,7 @@ export function meUser(me: MeResponse | AuthMeResponse | null | undefined): MeUs
   if (!base) return null;
   return {
     ...base,
-    ...(m.bot ? { bot: m.bot, kind: "bot" as const } : {}),
+    ...(m.bot ? { bot: m.bot, kind: "bot" as const } : m.principal?.kind ? { kind: m.principal.kind } : {}),
     ...(m.email !== undefined ? { email: m.email } : {}),
     ...(m.emailVerified !== undefined ? { emailVerified: m.emailVerified } : {}),
     ...(m.personalOrgId !== undefined ? { personalOrgId: m.personalOrgId } : {}),
