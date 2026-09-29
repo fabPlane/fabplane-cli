@@ -20,10 +20,11 @@ import {
 } from "../credentials.js";
 import { cartItemsFromCsv, cartItemsFromJson, parseJsonl } from "../csv.js";
 import { FabplaneApiError } from "../errors.js";
+import { ImageFetchError, fetchImage, validateImage } from "../images.js";
 import { FabdeskClient, FabdeskError } from "../fabdesk.js";
 import { runMcpStdio, type FabplaneMcpOptions } from "../mcp.js";
 import { dashboardUrlFor } from "../origin.js";
-import type { AttributeValue, CartItemInput, ImageUpload, InventoryItemInput, Role } from "../types.js";
+import type { AttributeValue, CartItemInput, ImageUpload, InventoryItemInput, PhotoQueueItem, Role } from "../types.js";
 import { VERSION } from "../version.js";
 import { keyValues, table } from "./format.js";
 
@@ -68,7 +69,7 @@ const GLOBAL_OPTIONS: Record<string, OptSpec> = {
   help: { type: "boolean", short: "h" },
 };
 
-const GROUPS = new Set(["orgs", "tokens", "destinations", "carts", "inventory", "desktop"]);
+const GROUPS = new Set(["orgs", "tokens", "destinations", "carts", "inventory", "inventory photos", "desktop"]);
 
 const IMAGE_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -801,6 +802,104 @@ const commands: Record<string, Command> = {
     },
   },
 
+  /* ---------- inventory photo queue ---------- */
+  "inventory photos queue": {
+    usage: "fabplane inventory photos queue [--all] [--limit N] [--cursor C]",
+    summary: "Items waiting for a photo, with counts (--all adds leased and skipped ones)",
+    options: { all: { type: "boolean" }, limit: { type: "string" }, cursor: { type: "string" } },
+    async run(ctx, _args, v) {
+      const res = await (await ctx.client()).listPhotoQueue(
+        await ctx.orgId(),
+        def({ include: v["all"] ? ("all" as const) : undefined, limit: int(str(v, "limit"), "limit"), cursor: str(v, "cursor") }),
+      );
+      const c = res.counts;
+      ctx.print(res, () =>
+        [
+          `queued ${c.queued} · available ${c.available} · leased ${c.leased} · skipped ${c.skipped}`,
+          "",
+          photoTable(res.items),
+          ...(res.nextCursor ? [`(more: --cursor ${res.nextCursor})`] : []),
+        ].join("\n"),
+      );
+    },
+  },
+  "inventory photos claim": {
+    usage: "fabplane inventory photos claim [--limit N] [--lease SECONDS] [--worker NAME]",
+    summary: "Lease items to find photos for (default 5 for 900 s)",
+    options: { limit: { type: "string" }, lease: { type: "string" }, worker: { type: "string" } },
+    async run(ctx, _args, v) {
+      const limit = int(str(v, "limit"), "limit");
+      const leaseSeconds = int(str(v, "lease"), "lease");
+      if (limit !== undefined && (limit < 1 || limit > 25)) throw new UsageError("--limit must be 1..25");
+      if (leaseSeconds !== undefined && (leaseSeconds < 60 || leaseSeconds > 3600)) throw new UsageError("--lease must be 60..3600 seconds");
+      const res = await (await ctx.client()).claimPhotoQueue(await ctx.orgId(), def({ limit, leaseSeconds, worker: str(v, "worker") }));
+      ctx.print(res, () => (res.items.length ? `Leased ${res.items.length} item(s) until ${res.leaseUntil}:\n${photoTable(res.items)}` : "Nothing to claim: the photo queue is empty."));
+    },
+  },
+  "inventory photos attach": {
+    usage: "fabplane inventory photos attach <itemId> (--url IMAGE_URL | --file PATH) [--source-url PAGE_URL] [--source web] [--timeout SECONDS]",
+    summary: "Download (or read) a photo, check it, and upload it to the item",
+    options: { url: { type: "string" }, file: { type: "string" }, "source-url": { type: "string" }, source: { type: "string" }, timeout: { type: "string" } },
+    async run(ctx, args, v) {
+      const itemId = need(args, 0, "itemId");
+      const url = str(v, "url");
+      const file = str(v, "file");
+      if (!url === !file) throw new UsageError("Give exactly one of --url or --file");
+      const sourceUrl = str(v, "source-url");
+      if (sourceUrl && !/^https?:\/\//i.test(sourceUrl)) throw new UsageError("--source-url must be an http(s) URL");
+      if (sourceUrl && sourceUrl.length > 2000) throw new UsageError("--source-url is longer than 2000 characters");
+      let image: ImageUpload;
+      let fetchedFrom: string | undefined;
+      if (url) {
+        const timeoutSec = num(str(v, "timeout"), "timeout");
+        const got = await fetchImage(url, { ...(ctx.io.fetch ? { fetch: ctx.io.fetch } : {}), ...(timeoutSec ? { timeoutMs: timeoutSec * 1000 } : {}) });
+        image = got.image;
+        fetchedFrom = url;
+      } else {
+        const data = new Uint8Array(await readFile(ctx.path(file!)));
+        // Local files must be recognisable from their bytes; the extension alone proves nothing.
+        const contentType = validateImage(data, null);
+        image = { data, contentType, filename: file!.split(/[\\/]/).pop() ?? "image" };
+      }
+      const source = str(v, "source") ?? (url ? "web" : "user");
+      if (source.length < 1 || source.length > 80) throw new UsageError("--source must be 1..80 characters");
+      const finalSourceUrl = sourceUrl ?? fetchedFrom;
+      const res = await (await ctx.client()).uploadInventoryImage(await ctx.orgId(), itemId, image, def({ source, sourceUrl: finalSourceUrl }));
+      ctx.print(res, () => `Attached ${res.image.contentType} (${res.image.bytes} bytes) to ${itemId}${finalSourceUrl ? ` from ${finalSourceUrl}` : ""}.`);
+    },
+  },
+  "inventory photos skip": {
+    usage: "fabplane inventory photos skip <itemId> [--note TEXT]",
+    summary: "No photo can be found: take the item out of the queue",
+    options: { note: { type: "string" } },
+    async run(ctx, args, v) {
+      const itemId = need(args, 0, "itemId");
+      const note = str(v, "note");
+      if (note && note.length > 500) throw new UsageError("--note is longer than 500 characters");
+      const { item } = await (await ctx.client()).releasePhotoQueueItem(await ctx.orgId(), itemId, def({ outcome: "not_found" as const, note }));
+      ctx.print({ item }, () => `Skipped ${item.name} (${item.id}); it left the photo queue.`);
+    },
+  },
+  "inventory photos retry": {
+    usage: "fabplane inventory photos retry <itemId> [--note TEXT]",
+    summary: "Give up the lease; the item stays queued for another attempt",
+    options: { note: { type: "string" } },
+    async run(ctx, args, v) {
+      const itemId = need(args, 0, "itemId");
+      const { item } = await (await ctx.client()).releasePhotoQueueItem(await ctx.orgId(), itemId, def({ outcome: "retry" as const, note: str(v, "note") }));
+      ctx.print({ item }, () => `Released ${item.name} (${item.id}) back to the queue (attempts: ${item.photoSearch.attempts}).`);
+    },
+  },
+  "inventory photos requeue": {
+    usage: "fabplane inventory photos requeue <itemId>",
+    summary: "Put a skipped item back in the queue (admin)",
+    async run(ctx, args) {
+      const itemId = need(args, 0, "itemId");
+      const { item } = await (await ctx.client()).requeuePhotoQueueItem(await ctx.orgId(), itemId);
+      ctx.print({ item }, () => `Requeued ${item.name} (${item.id}).`);
+    },
+  },
+
   /* ---------- mcp ---------- */
   mcp: {
     usage: "fabplane mcp [--desktop]",
@@ -912,6 +1011,13 @@ const commands: Record<string, Command> = {
 
 class SilentFailure extends Error {}
 
+function photoTable(items: PhotoQueueItem[]): string {
+  return table(
+    items.map((i) => ({ ...i, status: i.photoSearch.status, attempts: i.photoSearch.attempts, lease: i.photoSearch.leaseUntil ? `${i.photoSearch.leaseOwner ?? "?"} until ${i.photoSearch.leaseUntil}` : "", note: i.photoSearch.note })),
+    [["id", "id"], ["name", "name"], ["mpn", "mpn"], ["manufacturer", "mfr"], ["status", "status"], ["attempts", "tries"], ["lease", "lease"], ["note", "note"]],
+  );
+}
+
 function derivedExternalId(item: InventoryItemInput): string {
   const key = [item.name, item.mpn, item.manufacturer, item.sku, item.location].map((s) => (s ?? "").trim().toLowerCase()).join("|");
   return `sha256:${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
@@ -925,7 +1031,7 @@ export function helpText(topic?: string): string {
   const rows = Object.entries(commands).map(([, c]) => {
     const words: string[] = [];
     for (const w of c.usage.replace(/^fabplane /, "").split(" ")) {
-      if (w.startsWith("[") || w.startsWith("--")) break;
+      if (w.startsWith("[") || w.startsWith("(") || w.startsWith("--")) break;
       words.push(w);
     }
     return `  ${words.join(" ").padEnd(34)} ${c.summary}`;
@@ -954,7 +1060,7 @@ const NEG = "\u0000neg:";
 
 export async function runCli(argv: string[], io: CliIo): Promise<number> {
   const words: number[] = [];
-  for (let i = 0; i < argv.length && words.length < 2; i++) {
+  for (let i = 0; i < argv.length && words.length < 3; i++) {
     const a = argv[i] ?? "";
     if (a === "--") break;
     if (a.startsWith("-")) {
@@ -963,7 +1069,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       continue;
     }
     if (words.length === 0) words.push(i);
-    else if (GROUPS.has(argv[words[0]!] ?? "")) words.push(i);
+    else if (GROUPS.has(words.map((w) => argv[w]).join(" "))) words.push(i);
     else break;
   }
   const cmdWords = words.map((i) => argv[i] ?? "");
@@ -989,7 +1095,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
   const command = commands[key];
   if (!command) {
     if (first && GROUPS.has(first)) {
-      io.stderr(`${cmdWords[1] ? `Unknown command "${key}". ` : ""}Usage:\n${helpText(first)}`);
+      const group = GROUPS.has(key) ? key : GROUPS.has(cmdWords.slice(0, 2).join(" ")) ? cmdWords.slice(0, 2).join(" ") : first;
+      io.stderr(`${key !== group ? `Unknown command "${key}". ` : ""}Usage:\n${helpText(group)}`);
       return 2;
     }
     io.stderr(`Unknown command "${first}". Run \`fabplane help\`.`);
@@ -1035,6 +1142,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       return fail(1, `${err.message} (HTTP ${err.status} ${err.code})${hint}`, { error: err.code, status: err.status });
     }
     if (err instanceof FabdeskError) return fail(1, err.message, { error: "fabdesk", status: err.status });
+    if (err instanceof ImageFetchError) return fail(1, err.message, { error: "invalid_image" });
     const e = err as NodeJS.ErrnoException;
     if (e && e.code === "ENOENT" && e.path) return fail(1, `File not found: ${e.path}`, { error: "not_found" });
     if (e instanceof TypeError && /fetch failed/i.test(e.message)) {

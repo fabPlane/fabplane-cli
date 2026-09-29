@@ -195,7 +195,41 @@ export type InventoryImage = {
   bytes: number;
   url: string;
   createdAt: string;
+  /** Where the image came from, e.g. `user` or `web`. */
+  source?: string;
+  /** Page the image was found on (http(s), ≤2000 chars). */
+  sourceUrl?: string;
 };
+
+/* ---------- v1.1: inventory photo queue ---------- */
+
+export type PhotoSearch = {
+  status: "queued" | "skipped";
+  attempts: number;
+  note: string | null;
+  leaseUntil: string | null;
+  leaseOwner: string | null;
+};
+
+export type PhotoQueueItem = {
+  id: string;
+  name: string;
+  mpn?: string;
+  manufacturer?: string;
+  sku?: string;
+  category?: string;
+  description?: string;
+  attributes: Record<string, unknown>;
+  tags: string[];
+  photoSearch: PhotoSearch;
+};
+
+export type PhotoQueueCounts = { queued: number; available: number; leased: number; skipped: number };
+
+export type ListPhotoQueueQuery = { limit?: number; cursor?: string; include?: "available" | "all" };
+export type ClaimPhotoQueueInput = { limit?: number; leaseSeconds?: number; worker?: string };
+export type ReleasePhotoQueueInput = { outcome: "retry" | "not_found"; note?: string };
+export type UploadImageOptions = { source?: string; sourceUrl?: string };
 
 export type InventoryItem = Omit<InventoryItemInput, "serverAiProcessing" | "quantity" | "unit" | "tags" | "attributes"> & {
   id: string;
@@ -205,6 +239,8 @@ export type InventoryItem = Omit<InventoryItemInput, "serverAiProcessing" | "qua
   tags: string[];
   attributes: Record<string, unknown>;
   images: InventoryImage[];
+  /** v1.1 photo-queue state; absent on older API builds. */
+  photoSearch?: PhotoSearch;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;

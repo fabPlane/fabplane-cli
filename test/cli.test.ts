@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, describe, it } from "node:test";
-import { FabdeskClient, runCli, type CliIo, type FabplaneMcpOptions } from "../src/index.js";
+import { FabdeskClient, VERSION, runCli, type CliIo, type FabplaneMcpOptions } from "../src/index.js";
 import { OTHER_TOKEN, USER_TOKEN, startFakeApi, type FakeApi } from "./fake-api.js";
 import { DAEMON_TOKEN, startFakeDaemon } from "./fake-daemon.js";
 
@@ -53,8 +53,8 @@ describe("argv handling", () => {
     assert.match(help.stdout, /Usage: fabplane <command>/);
     for (const c of ["login", "orgs list", "carts import", "inventory adjust", "mcp", "desktop call", "api"]) assert.ok(help.stdout.includes(`  ${c}`), c);
     assert.match((await cli([])).stdout, /Commands:/);
-    assert.equal((await cli(["--version"])).stdout, "0.1.0");
-    assert.equal((await cli(["version", "--json"])).json().version, "0.1.0");
+    assert.equal((await cli(["--version"])).stdout, VERSION);
+    assert.equal((await cli(["version", "--json"])).json().version, VERSION);
     assert.match((await cli(["help", "carts"])).stdout, /carts export <cartId>/);
     assert.match((await cli(["carts", "show", "--help"])).stdout, /fabplane carts show <cartId>/);
     const unknown = await cli(["frobnicate"]);
@@ -443,7 +443,7 @@ describe("the built bin", () => {
   it("runs under plain node", { skip: !existsSync(bin) && "dist/ not built" }, () => {
     const help = spawnSync(process.execPath, [bin, "help"], { encoding: "utf8" });
     assert.equal(help.status, 0, help.stderr);
-    assert.match(help.stdout, /fabplane 0\.1\.0/);
+    assert.ok(help.stdout.includes(`fabplane ${VERSION}`));
     const bad = spawnSync(process.execPath, [bin, "orgs", "list"], { encoding: "utf8", env: { ...process.env, FABPLANE_TOKEN: "", FABPLANE_CREDENTIALS_FILE: join(tmpdir(), "fabplane-none.json"), FABPLANE_API_ORIGIN: "http://127.0.0.1:9" } });
     assert.equal(bad.status, 2);
     assert.match(bad.stderr, /Not logged in/);
@@ -470,3 +470,102 @@ describe("scripts/sync-spec.ts", () => {
     assert.equal(readFileSync(join(dir, "out.txt"), "utf8"), "changed=false\n");
   });
 });
+
+describe("inventory photos", () => {
+  // A fresh org per run: other suites fill the personal org's inventory.
+  let slug = "";
+  const pc = (argv: string[]) => cli([...argv, "--org", slug]);
+  async function seedItems(names: string[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const name of names) {
+      const r = await pc(["inventory", "add", "--name", name, "--mpn", `${name}-MPN`, "--json"]);
+      assert.equal(r.code, 0, r.stderr);
+      ids.push(r.json().item.id);
+    }
+    return ids;
+  }
+
+  it("queue, claim, attach --url, skip, retry, requeue", async () => {
+    await login();
+    slug = `photos-${Date.now()}`;
+    assert.equal((await cli(["orgs", "create", "Photos", "--slug", slug])).code, 0);
+    const [a, b, c] = await seedItems(["Photo A", "Photo B", "Photo C"]);
+    const queue = await pc(["inventory", "photos", "queue"]);
+    assert.equal(queue.code, 0, queue.stderr);
+    assert.match(queue.stdout, /^queued \d+ · available \d+ · leased 0 · skipped \d+/);
+    assert.match(queue.stdout, /Photo A/);
+
+    const claim = await pc(["inventory", "photos", "claim", "--limit", "2", "--lease", "600", "--worker", "test-bot", "--json"]);
+    assert.equal(claim.code, 0, claim.stderr);
+    const claimed = claim.json().items as Array<{ id: string; photoSearch: { attempts: number; leaseOwner: string } }>;
+    assert.equal(claimed.length, 2);
+    assert.equal(claimed[0]!.photoSearch.leaseOwner, "test-bot");
+    assert.equal(claimed[0]!.photoSearch.attempts, 1);
+    const claimReq = api.requests.filter((r) => r.path.endsWith("/photo-queue/claim")).at(-1)!;
+    assert.deepEqual(claimReq.body, { limit: 2, leaseSeconds: 600, worker: "test-bot" });
+    const all = await pc(["inventory", "photos", "queue", "--all", "--json"]);
+    assert.ok(all.json().counts.leased >= 2);
+    assert.match((await pc(["inventory", "photos", "queue", "--all"])).stdout, /test-bot until/);
+    assert.equal((await pc(["inventory", "photos", "claim", "--limit", "26"])).code, 2);
+    assert.equal((await pc(["inventory", "photos", "claim", "--lease", "30"])).code, 2);
+
+    const attach = await pc(["inventory", "photos", "attach", a!, "--url", `${api.origin}/img/redirect`]);
+    assert.equal(attach.code, 0, attach.stderr);
+    assert.match(attach.stdout, /Attached image\/png \(\d+ bytes\) to .* from http:\/\/127\.0\.0\.1:\d+\/img\/redirect/);
+    const itemA = api.state.inventory.get(a!)!;
+    assert.equal(itemA["images"][0].source, "web");
+    assert.equal(itemA["images"][0].sourceUrl, `${api.origin}/img/redirect`);
+    assert.equal(itemA["photoSearch"].leaseUntil, null, "upload clears the lease");
+
+    const withPage = await pc(["inventory", "photos", "attach", b!, "--url", `${api.origin}/img/octet`, "--source-url", "https://www.example.com/product/b", "--json"]);
+    assert.equal(withPage.code, 0, withPage.stderr);
+    assert.equal(withPage.json().image.sourceUrl, "https://www.example.com/product/b");
+    assert.equal(withPage.json().image.contentType, "image/jpeg");
+
+    const bad = await pc(["inventory", "photos", "attach", c!, "--url", `${api.origin}/img/page.html`]);
+    assert.equal(bad.code, 1);
+    assert.match(bad.stderr, /Not an accepted image/);
+    assert.match((await pc(["inventory", "photos", "attach", c!, "--url", `${api.origin}/img/big-declared`])).stderr, /limit is 10485760 \(10 MiB\)/);
+    assert.equal((await pc(["inventory", "photos", "attach", c!])).code, 2);
+    assert.equal((await pc(["inventory", "photos", "attach", c!, "--url", "x", "--file", "y"])).code, 2);
+    assert.equal((await pc(["inventory", "photos", "attach", c!, "--url", `${api.origin}/img/part.png`, "--source-url", "ftp://x"])).code, 2);
+
+    await writeFile(join(dir, "shot.jpg"), JSON_SAFE_JPEG);
+    const fromFile = await pc(["inventory", "photos", "attach", c!, "--file", "shot.jpg", "--json"]);
+    assert.equal(fromFile.code, 0, fromFile.stderr);
+    assert.equal(fromFile.json().image.source, "user");
+    await writeFile(join(dir, "fake.png"), "not really");
+    assert.match((await pc(["inventory", "photos", "attach", c!, "--file", "fake.png"])).stderr, /Not an accepted image|unrecognised/);
+
+    const [d, e] = await seedItems(["Photo D", "Photo E"]);
+    const skip = await pc(["inventory", "photos", "skip", d!, "--note", "obsolete part, no images online"]);
+    assert.match(skip.stdout, /Skipped Photo D .*left the photo queue/);
+    assert.equal(api.state.inventory.get(d!)!["photoSearch"].status, "skipped");
+    assert.equal(api.state.inventory.get(d!)!["photoSearch"].note, "obsolete part, no images online");
+    const retry = await pc(["inventory", "photos", "retry", e!]);
+    assert.match(retry.stdout, /Released Photo E .* back to the queue \(attempts: \d+\)/);
+    const releaseReq = api.requests.filter((r) => r.path.endsWith("/photo-queue/release")).at(-1)!;
+    assert.deepEqual(releaseReq.body, { outcome: "retry" });
+    const withSkipped = await pc(["inventory", "photos", "queue", "--all", "--json"]);
+    assert.ok(withSkipped.json().items.some((i: { id: string; photoSearch: { status: string } }) => i.id === d && i.photoSearch.status === "skipped"), "--all lists skipped items");
+    assert.ok(!(await pc(["inventory", "photos", "queue", "--json"])).json().items.some((i: { id: string }) => i.id === d));
+    assert.equal((await pc(["inventory", "photos", "attach", e!, "--file", "shot.jpg", "--source", "x".repeat(81)])).code, 2);
+    const requeue = await pc(["inventory", "photos", "requeue", d!]);
+    assert.match(requeue.stdout, /Requeued Photo D/);
+    assert.equal(api.state.inventory.get(d!)!["photoSearch"].status, "queued");
+    assert.equal(api.state.inventory.get(d!)!["photoSearch"].attempts, 0);
+
+    const empty = await pc(["inventory", "photos", "claim", "--limit", "25"]);
+    assert.equal(empty.code, 0);
+    const again = await pc(["inventory", "photos", "claim"]);
+    assert.match(again.stdout, /Nothing to claim/);
+
+    const help = await cli(["inventory", "photos"]);
+    assert.equal(help.code, 2);
+    assert.match(help.stderr, /inventory photos attach <itemId>/);
+    assert.doesNotMatch(help.stderr, /inventory adjust/);
+    assert.match((await cli(["help"])).stdout, /  inventory photos claim/);
+  });
+});
+
+const JSON_SAFE_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xff, 0xd9]);

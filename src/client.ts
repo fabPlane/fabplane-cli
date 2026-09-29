@@ -30,6 +30,12 @@ import type {
   InvitePreview,
   ListCartsQuery,
   ListInventoryQuery,
+  ListPhotoQueueQuery,
+  ClaimPhotoQueueInput,
+  PhotoQueueCounts,
+  PhotoQueueItem,
+  ReleasePhotoQueueInput,
+  UploadImageOptions,
   Member,
   MeResponse,
   MeUser,
@@ -115,6 +121,11 @@ export class FabplaneClient {
     this.clientId = options.clientId ?? DEFAULT_CLIENT_ID;
     this.fetchImpl = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.extraHeaders = options.headers ?? {};
+  }
+
+  /** The fetch this client uses (also used to download images for photo backfill). */
+  get fetcher(): FetchLike {
+    return this.fetchImpl;
   }
 
   /** A copy of this client using another bearer token. */
@@ -369,10 +380,15 @@ export class FabplaneClient {
       json: { delta, ...(reason !== undefined ? { reason } : {}) },
     });
   }
-  /** `POST /v1/private/orgs/:orgId/inventory/:itemId/images` [uploadInventoryImage] (multipart `image`) */
-  uploadInventoryImage(orgId: string, itemId: string, image: ImageUpload): Promise<{ image: InventoryImage }> {
+  /**
+   * `POST /v1/private/orgs/:orgId/inventory/:itemId/images` [uploadInventoryImage] (multipart `image`).
+   * `source` (e.g. `web`) and `sourceUrl` (the page it came from) are stored on the image.
+   */
+  uploadInventoryImage(orgId: string, itemId: string, image: ImageUpload, options: UploadImageOptions = {}): Promise<{ image: InventoryImage }> {
     const form = new FormData();
     form.append("image", toBlob(image), image.filename ?? `image.${extensionFor(image.contentType)}`);
+    if (options.source !== undefined) form.append("source", options.source);
+    if (options.sourceUrl !== undefined) form.append("sourceUrl", options.sourceUrl);
     return this.request("POST", `${this.inventoryPath(orgId, itemId)}/images`, { body: form });
   }
   /**
@@ -395,6 +411,37 @@ export class FabplaneClient {
   /** `DELETE /v1/private/orgs/:orgId/inventory/:itemId/images/:imageId` [deleteInventoryImage] */
   deleteInventoryImage(orgId: string, itemId: string, imageId: string): Promise<void> {
     return this.request("DELETE", `${this.inventoryPath(orgId, itemId)}/images/${enc(imageId)}`);
+  }
+
+  /* ================= Inventory photo queue (v1.1) ================= */
+
+  /**
+   * `GET /v1/private/orgs/:orgId/inventory/photo-queue` [listPhotoQueue]: items with no image that
+   * are not skipped. `include: "available"` (default) hides leased items; `"all"` shows them.
+   */
+  listPhotoQueue(
+    orgId: string,
+    query: ListPhotoQueueQuery = {},
+  ): Promise<{ items: PhotoQueueItem[]; nextCursor: string | null; counts: PhotoQueueCounts }> {
+    return this.request("GET", `${this.inventoryPath(orgId)}/photo-queue`, { query: { ...query } });
+  }
+  /**
+   * `POST /v1/private/orgs/:orgId/inventory/photo-queue/claim` [claimPhotoQueue]: atomically leases up
+   * to `limit` items (1..25, default 5) for `leaseSeconds` (60..3600, default 900).
+   */
+  claimPhotoQueue(orgId: string, body: ClaimPhotoQueueInput = {}): Promise<{ items: PhotoQueueItem[]; leaseUntil: string }> {
+    return this.request("POST", `${this.inventoryPath(orgId)}/photo-queue/claim`, { json: body });
+  }
+  /**
+   * `POST /v1/private/orgs/:orgId/inventory/:itemId/photo-queue/release` [releasePhotoQueueItem]:
+   * `retry` returns the item to the queue; `not_found` marks it skipped with the note.
+   */
+  releasePhotoQueueItem(orgId: string, itemId: string, body: ReleasePhotoQueueInput): Promise<{ item: PhotoQueueItem }> {
+    return this.request("POST", `${this.inventoryPath(orgId, itemId)}/photo-queue/release`, { json: body });
+  }
+  /** `POST /v1/private/orgs/:orgId/inventory/:itemId/photo-queue/requeue` [requeuePhotoQueueItem] (admin) */
+  requeuePhotoQueueItem(orgId: string, itemId: string): Promise<{ item: PhotoQueueItem }> {
+    return this.request("POST", `${this.inventoryPath(orgId, itemId)}/photo-queue/requeue`);
   }
 
   /* ================= Existing endpoints (auth, settings, catalog, push) ================= */

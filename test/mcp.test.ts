@@ -6,7 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { FabdeskClient, FabplaneClient, createFabplaneMcpServer, fabplaneTools } from "../src/index.js";
-import { startFakeApi, USER_TOKEN, type FakeApi } from "./fake-api.js";
+import { JPEG_BYTES, startFakeApi, USER_TOKEN, type FakeApi } from "./fake-api.js";
 import { DAEMON_TOKEN, startFakeDaemon } from "./fake-daemon.js";
 
 type TextResult = { content: Array<{ type: string; text: string }>; isError?: boolean };
@@ -125,6 +125,53 @@ describe("fabplane MCP server --desktop", () => {
     } finally {
       await mcp.close();
       await daemon.close();
+    }
+  });
+});
+
+describe("photo-queue MCP tools", () => {
+  it("queue, claim, attach (url and base64), release", async () => {
+    const api = await startFakeApi();
+    const client = new FabplaneClient({ origin: api.origin, token: USER_TOKEN });
+    const orgId = (await client.listOrgs()).orgs.find((o) => o.personal)!.id;
+    const ids: string[] = [];
+    for (const name of ["Q1", "Q2", "Q3", "Q4"]) ids.push((await client.createInventoryItem(orgId, { name, mpn: `${name}-X`, manufacturer: "Acme" })).item.id);
+    const mcp = await connect(createFabplaneMcpServer({ client, orgId }));
+    try {
+      const { tools } = await mcp.listTools();
+      for (const n of ["inventory_photo_queue", "inventory_photo_claim", "inventory_photo_attach", "inventory_photo_release"]) assert.ok(tools.some((t) => t.name === n), n);
+      const queue = (await mcp.callTool({ name: "inventory_photo_queue", arguments: {} })) as TextResult;
+      assert.match(queue.content[0]!.text, /Photo queue: 4 queued, 4 available, 0 leased, 0 skipped/);
+      assert.match(queue.content[0]!.text, /Q1 \(Acme Q1-X\)/);
+
+      const claim = (await mcp.callTool({ name: "inventory_photo_claim", arguments: { limit: 4, worker: "claude" } })) as TextResult;
+      assert.match(claim.content[0]!.text, /Leased 4 item\(s\)/);
+      assert.match(claim.content[0]!.text, /leased by claude until/);
+
+      const byUrl = (await mcp.callTool({ name: "inventory_photo_attach", arguments: { itemId: ids[0], imageUrl: `${api.origin}/img/part.png`, sourceUrl: "https://www.example.com/q1" } })) as TextResult;
+      assert.equal(byUrl.isError, undefined, byUrl.content[0]!.text);
+      assert.equal(api.state.inventory.get(ids[0]!)!["images"][0].sourceUrl, "https://www.example.com/q1");
+      assert.equal(api.state.inventory.get(ids[0]!)!["images"][0].source, "web");
+
+      const byData = (await mcp.callTool({ name: "inventory_photo_attach", arguments: { itemId: ids[1], data: JPEG_BYTES.toString("base64"), contentType: "image/jpeg" } })) as TextResult;
+      assert.equal(byData.isError, undefined, byData.content[0]!.text);
+      assert.equal(api.state.inventory.get(ids[1]!)!["images"][0].contentType, "image/jpeg");
+
+      const neither = (await mcp.callTool({ name: "inventory_photo_attach", arguments: { itemId: ids[2] } })) as TextResult;
+      assert.equal(neither.isError, true);
+      const html = (await mcp.callTool({ name: "inventory_photo_attach", arguments: { itemId: ids[2], imageUrl: `${api.origin}/img/page.html` } })) as TextResult;
+      assert.equal(html.isError, true);
+      assert.match(html.content[0]!.text, /Not an accepted image/);
+
+      const skip = (await mcp.callTool({ name: "inventory_photo_release", arguments: { itemId: ids[2], outcome: "not_found", note: "no photo" } })) as TextResult;
+      assert.match(skip.content[0]!.text, /Skipped Q3/);
+      const retry = (await mcp.callTool({ name: "inventory_photo_release", arguments: { itemId: ids[3], outcome: "retry" } })) as TextResult;
+      assert.match(retry.content[0]!.text, /Released Q4 back to the queue/);
+      const after = (await mcp.callTool({ name: "inventory_photo_queue", arguments: { include: "all" } })) as TextResult;
+      assert.match(after.content[0]!.text, /Photo queue: 1 queued, 1 available, 0 leased, 1 skipped/);
+    } finally {
+      await mcp.close();
+      await api.close();
     }
   });
 });
