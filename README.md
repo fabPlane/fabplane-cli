@@ -97,7 +97,7 @@ Every command accepts `--json` (machine output), `--org <id|slug>` and `--origin
 | `inventory photos queue [--all] [--limit n] [--cursor c]` | Items still waiting for a photo, with queue counts |
 | `inventory photos claim [--limit N] [--lease SECONDS] [--worker NAME]` | Lease items to find photos for (default 5 for 900 s) |
 | `inventory photos attach <itemId> (--url IMAGE_URL \| --file PATH) [--source-url PAGE_URL] [--source web]` | Download or read a photo, check it, upload it |
-| `inventory photos skip <itemId> [--note T]` / `photos retry <itemId>` | Give up on an item (leaves the queue) or hand it back |
+| `inventory photos skip <itemId> [--note T] [--lease-token T]` / `photos retry <itemId> [--lease-token T]` | Give up on an item (leaves the queue) or hand it back |
 | `inventory photos requeue <itemId>` | Put a skipped item back in the queue (admin) |
 | `mcp [--desktop]` | Run the stdio MCP server |
 | `desktop status` / `desktop projects` / `desktop tools` | The local fabPlane desktop app |
@@ -170,6 +170,9 @@ How the queue works:
   the fewest attempts, then the oldest, come first.
 - A lease ends when you **attach** a photo, **retry** (hand the item back, still queued), **skip**
   (`not_found`: no photo exists; the item leaves the queue with your note), or when it expires.
+- Each claimed item comes with a **lease token**. Pass it to `photos skip` / `photos retry`
+  (`--lease-token`). If your lease expired and another worker reclaimed the item, the release is refused
+  with 409, which the CLI reports as "lease lost: another worker reclaimed this item; leave it alone".
 - An admin can **requeue** a skipped item. `photos queue --all` lists every item without a photo,
   including leased and skipped ones.
 
@@ -189,12 +192,13 @@ while :; do
   [ "$(echo "$items" | jq '.items | length')" = 0 ] && break
   echo "$items" | jq -c '.items[]' | while read -r item; do
     id=$(echo "$item" | jq -r .id)
+    lease=$(echo "$item" | jq -r .leaseToken)
     if found=$(find-photo "$item"); then          # e.g. "https://…/part.jpg https://…/product-page"
       set -- $found
       fabplane inventory photos attach "$id" --url "$1" --source-url "$2" \
-        || fabplane inventory photos retry "$id" --note "upload failed"
+        || fabplane inventory photos retry "$id" --lease-token "$lease" --note "upload failed"
     else
-      fabplane inventory photos skip "$id" --note "no product photo found"
+      fabplane inventory photos skip "$id" --lease-token "$lease" --note "no product photo found"
     fi
   done
 done
@@ -213,14 +217,17 @@ for (;;) {
   for (const item of items) {
     const hit = await findPhoto(item); // your local model/search: { imageUrl, pageUrl } | null
     if (!hit) {
-      await client.releasePhotoQueueItem(orgId, item.id, { outcome: "not_found", note: "no photo found" });
+      await client.releasePhotoQueueItem(orgId, item.id, { outcome: "not_found", note: "no photo found", leaseToken: item.leaseToken });
       continue;
     }
     try {
       const { image } = await fetchImage(hit.imageUrl); // redirects, 10 MiB cap, type check, timeout
       await client.uploadInventoryImage(orgId, item.id, image, { source: "web", sourceUrl: hit.pageUrl });
     } catch (err) {
-      await client.releasePhotoQueueItem(orgId, item.id, { outcome: "retry", note: String(err).slice(0, 500) });
+      // A 409 here means the lease was lost to another worker: leave the item alone.
+      await client
+        .releasePhotoQueueItem(orgId, item.id, { outcome: "retry", note: String(err).slice(0, 500), leaseToken: item.leaseToken })
+        .catch((e) => console.warn(`release ${item.id}: ${e}`));
     }
   }
 }

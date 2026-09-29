@@ -146,6 +146,8 @@ describe("photo-queue MCP tools", () => {
 
       const claim = (await mcp.callTool({ name: "inventory_photo_claim", arguments: { limit: 4, worker: "claude" } })) as TextResult;
       assert.match(claim.content[0]!.text, /Leased 4 item\(s\)/);
+      assert.match(claim.content[0]!.text, /leaseToken=[0-9a-f-]{36}/);
+      const tokens = new Map<string, string>((JSON.parse(claim.content[1]!.text).items as Array<{ id: string; leaseToken: string }>).map((i) => [i.id, i.leaseToken]));
       assert.match(claim.content[0]!.text, /leased by claude until/);
 
       const byUrl = (await mcp.callTool({ name: "inventory_photo_attach", arguments: { itemId: ids[0], imageUrl: `${api.origin}/img/part.png`, sourceUrl: "https://www.example.com/q1" } })) as TextResult;
@@ -163,9 +165,12 @@ describe("photo-queue MCP tools", () => {
       assert.equal(html.isError, true);
       assert.match(html.content[0]!.text, /Not an accepted image/);
 
-      const skip = (await mcp.callTool({ name: "inventory_photo_release", arguments: { itemId: ids[2], outcome: "not_found", note: "no photo" } })) as TextResult;
+      const stale = (await mcp.callTool({ name: "inventory_photo_release", arguments: { itemId: ids[2], outcome: "retry", leaseToken: "00000000-0000-4000-8000-000000000000" } })) as TextResult;
+      assert.equal(stale.isError, true);
+      assert.equal(stale.content[0]!.text, "lease lost: another worker reclaimed this item; leave it alone");
+      const skip = (await mcp.callTool({ name: "inventory_photo_release", arguments: { itemId: ids[2], outcome: "not_found", note: "no photo", leaseToken: tokens.get(ids[2]!) } })) as TextResult;
       assert.match(skip.content[0]!.text, /Skipped Q3/);
-      const retry = (await mcp.callTool({ name: "inventory_photo_release", arguments: { itemId: ids[3], outcome: "retry" } })) as TextResult;
+      const retry = (await mcp.callTool({ name: "inventory_photo_release", arguments: { itemId: ids[3], outcome: "retry", leaseToken: tokens.get(ids[3]!) } })) as TextResult;
       assert.match(retry.content[0]!.text, /Released Q4 back to the queue/);
       const after = (await mcp.callTool({ name: "inventory_photo_queue", arguments: { include: "all" } })) as TextResult;
       assert.match(after.content[0]!.text, /Photo queue: 1 queued, 1 available, 0 leased, 1 skipped/);

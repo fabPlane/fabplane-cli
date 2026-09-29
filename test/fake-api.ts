@@ -475,7 +475,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
     /* inventory */
     if (seg[2] === "inventory") {
       const view = (i: Json) => {
-        const { serverAiProcessing: _s, ...rest } = i;
+        const { serverAiProcessing: _s, leaseToken: _l, ...rest } = i;
         return rest;
       };
       const upsert = (input: Json): { item: Json; created: boolean } => {
@@ -543,8 +543,11 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
           .filter((i) => inQueue(i) && !leased(i))
           .sort((a, b) => a["photoSearch"].attempts - b["photoSearch"].attempts || a["createdAt"].localeCompare(b["createdAt"]))
           .slice(0, limit);
-        for (const i of picked) Object.assign(i["photoSearch"], { leaseUntil, leaseOwner: body?.worker ?? null, attempts: i["photoSearch"].attempts + 1 });
-        return send(res, 200, { items: picked.map(queueView), leaseUntil });
+        for (const i of picked) {
+          Object.assign(i["photoSearch"], { leaseUntil, leaseOwner: body?.worker ?? null, attempts: i["photoSearch"].attempts + 1 });
+          i["leaseToken"] = randomUUID();
+        }
+        return send(res, 200, { items: picked.map((i) => ({ ...queueView(i), leaseToken: i["leaseToken"] })), leaseUntil });
       }
       if (seg[3] === "bulk" && method === "POST") {
         const items = body?.items;
@@ -586,6 +589,8 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
       if (seg[4] === "photo-queue" && method === "POST") {
         if (seg[5] === "release") {
           if (body?.outcome !== "retry" && body?.outcome !== "not_found") return err(res, 400, "invalid_request");
+          if (leased(item) && body.leaseToken !== item["leaseToken"]) return err(res, 409, "conflict", "the item is leased by another worker");
+          delete item["leaseToken"];
           Object.assign(item["photoSearch"], { leaseUntil: null, leaseOwner: null, ...(body.note !== undefined ? { note: body.note } : {}) });
           if (body.outcome === "not_found") item["photoSearch"].status = "skipped";
           return send(res, 200, { item: queueView(item) });
@@ -606,6 +611,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
           if (item["images"].length >= 10) return err(res, 409, "conflict", "too many images");
           const image = { id: randomUUID(), contentType: f.type, bytes: f.size, url: `${origin}/signed/${f.name}`, createdAt: now(), ...(typeof source === "string" ? { source } : {}), ...(typeof sourceUrl === "string" ? { sourceUrl } : {}) };
           Object.assign(item["photoSearch"], { leaseUntil: null, leaseOwner: null });
+          delete item["leaseToken"];
           item["images"].push(image);
           return send(res, 201, { image });
         }

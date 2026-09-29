@@ -71,7 +71,7 @@ const cases: Array<[string, (c: FabplaneClient) => Promise<unknown>, string, str
   ["deleteInventoryImage", (c) => c.deleteInventoryImage(O, I, "img1"), "DELETE", `/v1/private/orgs/${O}/inventory/${I}/images/img1`],
   ["listPhotoQueue", (c) => c.listPhotoQueue(O, { include: "all", limit: 20 }), "GET", `/v1/private/orgs/${O}/inventory/photo-queue?include=all&limit=20`],
   ["claimPhotoQueue", (c) => c.claimPhotoQueue(O, { limit: 3, leaseSeconds: 600, worker: "openclaw" }), "POST", `/v1/private/orgs/${O}/inventory/photo-queue/claim`, { limit: 3, leaseSeconds: 600, worker: "openclaw" }],
-  ["releasePhotoQueueItem", (c) => c.releasePhotoQueueItem(O, I, { outcome: "not_found", note: "no image online" }), "POST", `/v1/private/orgs/${O}/inventory/${I}/photo-queue/release`, { outcome: "not_found", note: "no image online" }],
+  ["releasePhotoQueueItem", (c) => c.releasePhotoQueueItem(O, I, { outcome: "not_found", note: "no image online", leaseToken: "lt1" }), "POST", `/v1/private/orgs/${O}/inventory/${I}/photo-queue/release`, { outcome: "not_found", note: "no image online", leaseToken: "lt1" }],
   ["requeuePhotoQueueItem", (c) => c.requeuePhotoQueueItem(O, I), "POST", `/v1/private/orgs/${O}/inventory/${I}/photo-queue/requeue`],
   // Existing endpoints.
   ["me", (c) => c.me(), "GET", "/v1/auth/me"],
