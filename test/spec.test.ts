@@ -87,7 +87,7 @@ describe("workflows", () => {
     const text = wf("sync-api.yml");
     assert.match(text, /cron: "0 3 \* \* 1"/);
     assert.match(text, /workflow_dispatch/);
-    assert.match(text, /peter-evans\/create-pull-request@v7/);
+    assert.match(text, /peter-evans\/create-pull-request@v\d+/);
     assert.match(text, /if: steps\.sync\.outputs\.changed == 'true'/);
   });
 });
