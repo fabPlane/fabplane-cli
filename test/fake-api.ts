@@ -34,6 +34,8 @@ export type FakeState = {
   carts: Map<string, Json>;
   inventory: Map<string, Json>;
   deviceCodes: Map<string, { userCode: string; approved: boolean; polls: number }>;
+  botConnects: Map<string, Json>;
+  bots: Map<string, Json>;
   settings: Json | null;
 };
 
@@ -53,6 +55,8 @@ export function seedState(): FakeState {
     carts: new Map(),
     inventory: new Map(),
     deviceCodes: new Map(),
+    botConnects: new Map(),
+    bots: new Map(),
     settings: null,
   };
   const maya = { id: randomUUID(), subject: "password:maya@example.com", handle: "maya", displayName: "Maya Chen", email: "maya@example.com", emailVerified: true };
@@ -71,6 +75,19 @@ export function seedState(): FakeState {
   state.orgs.set(team.id, team);
   state.memberships.push({ orgId: team.id, userId: bob.id, role: "owner", joinedAt: now() });
   return state;
+}
+
+/** Creates a bot user in `orgId` with one fpb_ token; returns [bot view, token]. */
+export function makeBot(state: FakeState, orgId: string, input: { name: string; role?: string; agentKind?: string | null; createdBy?: string | null }): [Json, string] {
+  const id = randomUUID();
+  const user = { id, subject: `bot:${id}`, handle: input.name, displayName: input.name, email: null, kind: "bot", botOrgId: orgId };
+  state.users.set(id, user);
+  state.memberships.push({ orgId, userId: id, role: input.role ?? "member", joinedAt: now() });
+  const bot = { id, orgId, name: input.name, agentKind: input.agentKind ?? null, role: input.role ?? "member", createdBy: input.createdBy ?? null, createdAt: now(), lastUsedAt: null };
+  state.bots.set(id, bot);
+  const token = `fpb_${randomUUID().replace(/-/g, "")}`;
+  state.tokens.set(token, { userId: id });
+  return [bot, token];
 }
 
 export function freshPhotoSearch(): Json {
@@ -214,6 +231,44 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
       state.deviceCodes.delete(body.device_code);
       return send(res, 200, { access_token: USER_TOKEN, token_type: "Bearer", expires_in: 3600 });
     }
+    if (p === "/v1/auth/bot/connect" && method === "POST") {
+      if (typeof body?.name !== "string" || !body.name || body.name.length > 80) return err(res, 400, "invalid_request");
+      if (body.clientId !== "fabplane-cli") return err(res, 400, "invalid_request", "unknown clientId");
+      const connectCode = randomUUID();
+      const userCode = `B${state.botConnects.size.toString().padStart(3, "0")}-WXYZ`;
+      state.botConnects.set(connectCode, { connectCode, userCode, name: body.name, agentKind: body.agentKind ?? null, requestedOrgSlug: body.org ?? null, status: "pending", polls: 0, issued: false, expiresAt: new Date(Date.now() + 900_000).toISOString() });
+      return send(res, 200, {
+        connectCode,
+        userCode,
+        verificationUri: `http://app.example.test/dashboard/bots/connect`,
+        verificationUriComplete: `http://app.example.test/dashboard/bots/connect?code=${userCode}`,
+        expiresIn: 900,
+        interval: 5,
+      });
+    }
+    if (p === "/v1/auth/bot/token" && method === "POST") {
+      const req0 = state.botConnects.get(body?.connectCode);
+      if (!req0) return send(res, 400, { error: "expired_token" });
+      req0["polls"]++;
+      // Scripted outcomes keyed on the bot name, so tests can drive every branch.
+      const name = String(req0["name"]);
+      if (name.includes("slow") && req0["polls"] === 1) return send(res, 429, { error: "slow_down" });
+      if (name.includes("deny") && req0["polls"] >= 2) req0["status"] = "denied";
+      if (name.includes("expire") && req0["polls"] >= 2) req0["status"] = "expired";
+      if (req0["status"] === "pending" && !name.includes("manual") && !name.includes("deny") && !name.includes("expire") && req0["polls"] >= 2) {
+        const slug = req0["requestedOrgSlug"];
+        const target = [...state.orgs.values()].find((o) => (slug ? o["slug"] === slug : o["slug"] === "maya"));
+        if (!target) return send(res, 400, { error: "access_denied" });
+        const [bot, token] = makeBot(state, target["id"], { name, agentKind: req0["agentKind"] });
+        Object.assign(req0, { status: "approved", bot, token, orgId: target["id"] });
+      }
+      if (req0["status"] === "pending") return send(res, 428, { error: "authorization_pending" });
+      if (req0["status"] === "denied") return send(res, 400, { error: "access_denied" });
+      if (req0["status"] === "expired" || req0["issued"]) return send(res, 400, { error: "expired_token" });
+      req0["issued"] = true;
+      const o = state.orgs.get(req0["orgId"])!;
+      return send(res, 200, { accessToken: req0["token"], tokenType: "bearer", bot: req0["bot"], org: { id: o["id"], slug: o["slug"], name: o["name"], memberCount: state.memberships.filter((m) => m.orgId === o["id"]).length } });
+    }
     if (p === "/v1/auth/password" && method === "POST") {
       if (body?.password !== "pw") return send(res, 302, undefined, { location: "/login?auth_error=invalid_credentials" });
       return send(res, 302, undefined, { location: "/", "set-cookie": "fp_session=sess123; Path=/; HttpOnly" });
@@ -247,6 +302,32 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
     };
     const myOrgs = () => state.memberships.filter((m) => m.userId === uid).map((m) => orgView(state.orgs.get(m.orgId)!));
 
+    const isBot = user["kind"] === "bot";
+    if (seg[0] === "me" && seg.length === 1 && isBot) {
+      return send(res, 200, { principal: { subject: user["subject"], handle: user["handle"], displayName: user["displayName"], kind: "bot" }, bot: state.bots.get(uid), personalOrgId: null });
+    }
+    if (isBot && ["tokens", "settings", "invites", "bots"].includes(seg[0] ?? "")) return err(res, 403, "forbidden");
+    if (isBot && seg[0] === "orgs" && (seg.length === 1 ? method !== "GET" : seg[1] === "joinable" || seg[2] === "join" || seg[2] === "invites" || seg[2] === "bots")) return err(res, 403, "forbidden");
+    /* bot connect approval (humans) */
+    if (seg[0] === "bots" && seg[1] === "connect" && seg[2]) {
+      const reqB = [...state.botConnects.values()].find((r) => r["userCode"] === seg[2]);
+      if (!reqB) return err(res, 404, "not_found");
+      if (method === "GET" && seg.length === 3) {
+        const orgs = state.memberships.filter((m) => m.userId === uid && (m.role === "owner" || m.role === "admin")).map((m) => state.orgs.get(m.orgId)!).map((o) => ({ id: o["id"], slug: o["slug"], name: o["name"], memberCount: 1 }));
+        return send(res, 200, { request: { name: reqB["name"], agentKind: reqB["agentKind"], requestedOrgSlug: reqB["requestedOrgSlug"], expiresAt: reqB["expiresAt"], status: reqB["status"] }, orgs });
+      }
+      if (method === "POST" && seg[3] === "approve") {
+        const m = state.memberships.find((x) => x.orgId === body?.orgId && x.userId === uid);
+        if (!m || (m.role !== "owner" && m.role !== "admin")) return err(res, 403, "forbidden");
+        const [bot, token] = makeBot(state, body.orgId, { name: reqB["name"], role: body.role ?? "member", agentKind: reqB["agentKind"], createdBy: uid });
+        Object.assign(reqB, { status: "approved", bot, token, orgId: body.orgId });
+        return send(res, 200, { bot });
+      }
+      if (method === "POST" && seg[3] === "deny") {
+        reqB["status"] = "denied";
+        return send(res, 204);
+      }
+    }
     if (seg[0] === "me" && seg.length === 1) {
       return send(res, 200, { principal: { subject: user["subject"], handle: user["handle"], displayName: user["displayName"] }, email: user["email"], emailVerified: user["emailVerified"], personalOrgId: user["personalOrgId"] });
     }
@@ -331,6 +412,31 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
     if (!membership) return err(res, 404, "not_found");
     const isAdmin = membership.role === "owner" || membership.role === "admin";
 
+    /* bots (admin) */
+    if (seg[2] === "bots") {
+      if (!isAdmin) return err(res, 403, "forbidden");
+      if (seg.length === 3 && method === "GET") return send(res, 200, { bots: [...state.bots.values()].filter((b) => b["orgId"] === orgId) });
+      if (seg.length === 3 && method === "POST") {
+        if (typeof body?.name !== "string" || !body.name) return err(res, 400, "invalid_request");
+        const [bot, token] = makeBot(state, orgId, { name: body.name, role: body.role ?? "member", agentKind: body.agentKind ?? null, createdBy: uid });
+        return send(res, 201, { bot, token });
+      }
+      const bot = state.bots.get(seg[3] ?? "");
+      if (!bot || bot["orgId"] !== orgId) return err(res, 404, "not_found");
+      if (seg[4] === "tokens" && method === "POST") {
+        for (const [k, t] of state.tokens) if (t.userId === bot["id"]) state.tokens.delete(k);
+        const token = `fpb_${randomUUID().replace(/-/g, "")}`;
+        state.tokens.set(token, { userId: bot["id"] });
+        return send(res, 201, { token });
+      }
+      if (seg.length === 4 && method === "DELETE") {
+        for (const [k, t] of state.tokens) if (t.userId === bot["id"]) state.tokens.delete(k);
+        state.bots.delete(bot["id"]);
+        state.memberships = state.memberships.filter((m) => m.userId !== bot["id"]);
+        return send(res, 204);
+      }
+    }
+
     if (seg.length === 2) {
       if (method === "GET") return send(res, 200, { org: orgView(org) });
       if (method === "PATCH") {
@@ -353,7 +459,7 @@ export async function startFakeApi(state: FakeState = seedState()): Promise<Fake
           .filter((m) => m.orgId === orgId)
           .map((m) => {
             const u = state.users.get(m.userId)!;
-            return { userId: u["id"], handle: u["handle"], displayName: u["displayName"], email: u["email"], role: m.role, joinedAt: m.joinedAt };
+            return { userId: u["id"], handle: u["handle"], displayName: u["displayName"], email: u["email"], role: m.role, joinedAt: m.joinedAt, kind: u["kind"] === "bot" ? "bot" : "human" };
           });
         return send(res, 200, { members });
       }

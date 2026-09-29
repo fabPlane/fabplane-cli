@@ -585,3 +585,129 @@ describe("inventory photos", () => {
 });
 
 const JSON_SAFE_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xff, 0xd9]);
+
+describe("bots", () => {
+  it("bot connect: pending → approved stores the fpb_ token and the bot's org as default", async () => {
+    const opened: string[] = [];
+    const r = await cli(["bot", "connect", "--name", "shelf-bot", "--agent", "openclaw"], { io: { openUrl: (u) => opened.push(u) } });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /To connect bot "shelf-bot", an admin of the org opens\n {2}http:\/\/app\.example\.test\/dashboard\/bots\/connect\?code=B\d{3}-WXYZ/);
+    assert.match(r.stderr, /approves the code: B\d{3}-WXYZ/);
+    assert.match(r.stderr, /expires in 15 minutes/);
+    assert.equal(opened.length, 1);
+    assert.match(r.stdout, /Connected bot "shelf-bot" to Maya Chen's workspace \(maya\) as member/);
+    const file = JSON.parse(await readFile(credFile, "utf8"));
+    const profile = file.profiles[api.origin];
+    assert.match(profile.token, /^fpb_/);
+    assert.equal(profile.tokenKind, "bot");
+    const mayaOrg = [...api.state.orgs.values()].find((o) => o["slug"] === "maya")!;
+    assert.equal(profile.defaultOrgId, mayaOrg["id"]);
+    assert.equal(profile.bot.name, "shelf-bot");
+    assert.equal(profile.bot.orgSlug, "maya");
+    const connectReq = api.requests.filter((x) => x.path === "/v1/auth/bot/connect").at(-1)!;
+    assert.deepEqual(connectReq.body, { clientId: "fabplane-cli", name: "shelf-bot", agentKind: "openclaw" });
+    assert.equal(connectReq.auth, null);
+
+    // The bot credential drives whoami, the default org and the MCP tools.
+    const who = await cli(["whoami"]);
+    assert.match(who.stdout, /kind: +bot/);
+    assert.match(who.stdout, /bot: +shelf-bot/);
+    assert.match(who.stdout, /org: +Maya Chen's workspace \(maya\)/);
+    assert.equal((await cli(["whoami", "--json"])).json().kind, "bot");
+    const add = await cli(["inventory", "add", "--name", "bot-added part", "--json"]);
+    assert.equal(add.code, 0, add.stderr);
+    assert.equal(add.json().item.orgId, mayaOrg["id"]);
+    let captured: FabplaneMcpOptions | undefined;
+    await cli(["mcp"], { io: { runMcp: async (o) => void (captured = o) } });
+    assert.equal(await (captured!.orgId as () => Promise<string>)(), mayaOrg["id"]);
+    assert.match(captured!.client.token ?? "", /^fpb_/);
+
+    // Bots cannot manage bots or tokens.
+    const forbidden = await cli(["tokens", "list"]);
+    assert.equal(forbidden.code, 1);
+    assert.match(forbidden.stderr, /HTTP 403 forbidden/);
+    const out = await cli(["logout"]);
+    assert.match(out.stdout, /The bot token stays valid/);
+  });
+
+  it("bot connect into a requested org, replacing a human login", async () => {
+    await login(OTHER_TOKEN);
+    const r = await cli(["bot", "connect", "--name", "acme-bot", "--org", "acme", "--no-browser"], { io: { openUrl: () => assert.fail("must not open") } });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /to Acme Hardware \(acme\)/);
+    assert.match(r.stderr, /replaced the stored login .* \(was bob\)/);
+    assert.equal((api.requests.filter((x) => x.path === "/v1/auth/bot/connect").at(-1)!.body as { org?: string }).org, "acme");
+  });
+
+  it("bot connect: slow_down backs off, denied and expired fail clearly", async () => {
+    const sleeps: number[] = [];
+    const slow = await cli(["bot", "connect", "--name", "slow-bot"], { io: { sleep: async (ms) => void sleeps.push(ms) } });
+    assert.equal(slow.code, 0, slow.stderr);
+    assert.deepEqual(sleeps.slice(0, 2), [5000, 10000], "slow_down adds 5 s");
+
+    const failEnv = { env: { FABPLANE_CREDENTIALS_FILE: join(dir, "fail.json") } };
+    const denied = await cli(["bot", "connect", "--name", "deny-bot"], failEnv);
+    assert.equal(denied.code, 1);
+    assert.match(denied.stderr, /The connect request was denied in the dashboard\. \(HTTP 400 access_denied\)/);
+    const expired = await cli(["bot", "connect", "--name", "expire-bot"], failEnv);
+    assert.equal(expired.code, 1);
+    assert.match(expired.stderr, /expired .*Run `fabplane bot connect` again/);
+    assert.equal(existsSync(join(dir, "fail.json")), false, "nothing stored on failure");
+
+    assert.equal((await cli(["bot", "connect", "--agent", "robot"])).code, 2);
+    assert.equal((await cli(["bot", "connect", "--name", "x".repeat(81)])).code, 2);
+  });
+
+  it("bot connect approved from the dashboard side (approveBotConnect)", async () => {
+    // A human admin approves while the bot polls: drive both through the client.
+    await login();
+    const humanFile = credFile;
+    const pending = cli(["bot", "connect", "--name", "manual-bot"], {
+      env: { FABPLANE_CREDENTIALS_FILE: join(dir, "bot.json") },
+      io: {
+        sleep: async () => {
+          const req = [...api.state.botConnects.values()].find((x) => x["name"] === "manual-bot" && x["status"] === "pending");
+          if (req) {
+            const view = await cli(["api", "GET", `/v1/private/bots/connect/${req["userCode"]}`, "--json"], { env: { FABPLANE_CREDENTIALS_FILE: humanFile } });
+            const orgId = view.json().body.orgs[0].id;
+            await cli(["api", "POST", `/v1/private/bots/connect/${req["userCode"]}/approve`, JSON.stringify({ orgId, role: "admin" })], { env: { FABPLANE_CREDENTIALS_FILE: humanFile } });
+          }
+        },
+      },
+    });
+    const r = await pending;
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /as admin/);
+  });
+
+  it("bots list/create/rotate/remove and members show kind", async () => {
+    await login();
+    const created = await cli(["bots", "create", "ci-bot", "--role", "member", "--agent", "ci"]);
+    assert.equal(created.code, 0, created.stderr);
+    assert.match(created.stdout, /^fpb_[0-9a-f]+\n/);
+    assert.match(created.stdout, /not shown again/);
+    const token = created.stdout.split("\n")[0]!;
+    const list = await cli(["bots", "list", "--json"]);
+    const bot = list.json().bots.find((b: { name: string }) => b.name === "ci-bot");
+    assert.equal(bot.agentKind, "ci");
+    assert.match((await cli(["bots", "list"])).stdout, /ci-bot +ci +member/);
+    const members = await cli(["orgs", "members", "--json"]);
+    assert.equal(members.json().members.find((m: { handle: string }) => m.handle === "ci-bot").kind, "bot");
+
+    // The printed token works with login --token and is recognised as a bot.
+    const botLogin = await cli(["login", "--token", token], { env: { FABPLANE_CREDENTIALS_FILE: join(dir, "ci.json") } });
+    assert.equal(botLogin.code, 0, botLogin.stderr);
+    assert.match(botLogin.stdout, /as bot ci-bot/);
+    const ciProfile = JSON.parse(await readFile(join(dir, "ci.json"), "utf8")).profiles[api.origin];
+    assert.equal(ciProfile.tokenKind, "bot");
+    assert.equal(ciProfile.defaultOrgId, bot.orgId);
+
+    const rotated = await cli(["bots", "rotate", bot.id]);
+    assert.match(rotated.stdout, /^fpb_/);
+    assert.equal(api.state.tokens.has(token), false, "rotation revokes the old token");
+    assert.match((await cli(["bots", "remove", bot.id])).stdout, /Removed bot/);
+    assert.equal((await cli(["bots", "remove", bot.id])).code, 1);
+    assert.equal((await cli(["bots", "create", "x", "--role", "owner"])).code, 2);
+    assert.match((await cli(["bots"])).stderr, /bots rotate <botId>/);
+  });
+});

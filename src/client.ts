@@ -39,6 +39,13 @@ import type {
   UploadImageOptions,
   Member,
   MeResponse,
+  Bot,
+  BotConnectPollOutcome,
+  BotConnectRequest,
+  BotConnectStart,
+  BotConnectToken,
+  CreateBotInput,
+  StartBotConnectInput,
   MeUser,
   Org,
   OrgSummary,
@@ -447,6 +454,103 @@ export class FabplaneClient {
     return this.request("POST", `${this.inventoryPath(orgId, itemId)}/photo-queue/requeue`);
   }
 
+  /* ================= Bot accounts (v1.2) ================= */
+
+  /** `POST /v1/auth/bot/connect` [startBotConnect] (anonymous): a link + code for an org admin to approve. */
+  startBotConnect(body: StartBotConnectInput): Promise<BotConnectStart> {
+    return this.request("POST", "/v1/auth/bot/connect", { anonymous: true, json: { clientId: this.clientId, ...body } });
+  }
+
+  /**
+   * One `POST /v1/auth/bot/token` poll [pollBotConnect] (anonymous). `authorization_pending`,
+   * `slow_down`, `access_denied` and `expired_token` resolve; other failures throw.
+   */
+  async pollBotConnect(connectCode: string): Promise<BotConnectPollOutcome> {
+    const path = "/v1/auth/bot/token";
+    const res = await this.raw("POST", path, { anonymous: true, json: { connectCode } });
+    if (res.ok) {
+      const body = (await res.json()) as Partial<BotConnectToken>;
+      if (typeof body.accessToken !== "string" || !body.accessToken || !body.bot) {
+        throw new FabplaneApiError({ status: res.status, code: "invalid_response", message: "Bot token response has no accessToken", body, method: "POST", path });
+      }
+      return { status: "token", token: body as BotConnectToken };
+    }
+    if ([400, 401, 403, 428, 429].includes(res.status)) {
+      const err = await FabplaneApiError.fromResponse(res, "POST", path);
+      if (err.code === "authorization_pending" || (res.status === 428 && err.code === "http_428")) return { status: "pending" };
+      if (err.code === "slow_down" || (res.status === 429 && err.code === "http_429")) return { status: "slow_down" };
+      const b = err.body as Record<string, unknown> | undefined;
+      const description = b && typeof b["message"] === "string" ? b["message"] : undefined;
+      return { status: "error", error: err.code, ...(description ? { description } : {}) };
+    }
+    throw await FabplaneApiError.fromResponse(res, "POST", path);
+  }
+
+  /**
+   * Polls until an admin approves or denies the connect request, or it expires (honouring
+   * `interval` and `slow_down`). Throws `FabplaneApiError` with code `access_denied` /
+   * `expired_token` for those outcomes.
+   */
+  async waitForBotConnect(
+    start: BotConnectStart,
+    opts: { signal?: AbortSignal; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; now?: () => number; onPoll?: (outcome: BotConnectPollOutcome) => void } = {},
+  ): Promise<BotConnectToken> {
+    const sleep = opts.sleep ?? sleepMs;
+    const now = opts.now ?? Date.now;
+    const deadline = now() + start.expiresIn * 1000;
+    let interval = Math.max(1, start.interval);
+    const path = "/v1/auth/bot/token";
+    for (;;) {
+      await sleep(interval * 1000, opts.signal);
+      if (opts.signal?.aborted) throw new FabplaneApiError({ status: 0, code: "aborted", message: "Bot connect cancelled", body: null, method: "POST", path });
+      const outcome = await this.pollBotConnect(start.connectCode);
+      opts.onPoll?.(outcome);
+      if (outcome.status === "token") return outcome.token;
+      if (outcome.status === "slow_down") interval += 5;
+      if (outcome.status === "error") {
+        const message =
+          outcome.error === "access_denied"
+            ? "The connect request was denied in the dashboard."
+            : outcome.error === "expired_token"
+              ? "The connect request expired (or its token was already collected). Run `fabplane bot connect` again."
+              : `Bot connect failed: ${outcome.description ?? outcome.error}`;
+        throw new FabplaneApiError({ status: 400, code: outcome.error, message, body: outcome, method: "POST", path });
+      }
+      if (now() > deadline) {
+        throw new FabplaneApiError({ status: 400, code: "expired_token", message: "The connect request expired before anyone approved it. Run `fabplane bot connect` again.", body: null, method: "POST", path });
+      }
+    }
+  }
+
+  /** `GET /v1/private/bots/connect/:userCode` [getBotConnectRequest] (signed-in human) */
+  getBotConnectRequest(userCode: string): Promise<{ request: BotConnectRequest; orgs: OrgSummary[] }> {
+    return this.request("GET", `/v1/private/bots/connect/${enc(userCode)}`);
+  }
+  /** `POST /v1/private/bots/connect/:userCode/approve` [approveBotConnect] (admin of `orgId`) */
+  approveBotConnect(userCode: string, body: { orgId: string; role?: "member" | "admin" }): Promise<{ bot: Bot }> {
+    return this.request("POST", `/v1/private/bots/connect/${enc(userCode)}/approve`, { json: body });
+  }
+  /** `POST /v1/private/bots/connect/:userCode/deny` [denyBotConnect] */
+  denyBotConnect(userCode: string): Promise<void> {
+    return this.request("POST", `/v1/private/bots/connect/${enc(userCode)}/deny`);
+  }
+  /** `GET /v1/private/orgs/:orgId/bots` [listBots] (admin) */
+  listBots(orgId: string): Promise<{ bots: Bot[] }> {
+    return this.request("GET", `/v1/private/orgs/${enc(orgId)}/bots`);
+  }
+  /** `POST /v1/private/orgs/:orgId/bots` [createBot] (admin): the `fpb_` token is shown once. */
+  createBot(orgId: string, body: CreateBotInput): Promise<{ bot: Bot; token: string }> {
+    return this.request("POST", `/v1/private/orgs/${enc(orgId)}/bots`, { json: body });
+  }
+  /** `POST /v1/private/orgs/:orgId/bots/:botId/tokens` [rotateBotToken] (admin): revokes the previous tokens. */
+  rotateBotToken(orgId: string, botId: string): Promise<{ token: string }> {
+    return this.request("POST", `/v1/private/orgs/${enc(orgId)}/bots/${enc(botId)}/tokens`);
+  }
+  /** `DELETE /v1/private/orgs/:orgId/bots/:botId` [deleteBot] (admin) */
+  deleteBot(orgId: string, botId: string): Promise<void> {
+    return this.request("DELETE", `/v1/private/orgs/${enc(orgId)}/bots/${enc(botId)}`);
+  }
+
   /* ================= Existing endpoints (auth, settings, catalog, push) ================= */
 
   /** `POST /v1/auth/device/code`: starts an RFC 8628 device login. */
@@ -639,6 +743,7 @@ export function meUser(me: MeResponse | AuthMeResponse | null | undefined): MeUs
   if (!base) return null;
   return {
     ...base,
+    ...(m.bot ? { bot: m.bot, kind: "bot" as const } : {}),
     ...(m.email !== undefined ? { email: m.email } : {}),
     ...(m.emailVerified !== undefined ? { emailVerified: m.emailVerified } : {}),
     ...(m.personalOrgId !== undefined ? { personalOrgId: m.personalOrgId } : {}),

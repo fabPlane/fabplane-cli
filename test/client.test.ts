@@ -73,6 +73,15 @@ const cases: Array<[string, (c: FabplaneClient) => Promise<unknown>, string, str
   ["claimPhotoQueue", (c) => c.claimPhotoQueue(O, { limit: 3, leaseSeconds: 600, worker: "openclaw" }), "POST", `/v1/private/orgs/${O}/inventory/photo-queue/claim`, { limit: 3, leaseSeconds: 600, worker: "openclaw" }],
   ["releasePhotoQueueItem", (c) => c.releasePhotoQueueItem(O, I, { outcome: "not_found", note: "no image online", leaseToken: "lt1" }), "POST", `/v1/private/orgs/${O}/inventory/${I}/photo-queue/release`, { outcome: "not_found", note: "no image online", leaseToken: "lt1" }],
   ["requeuePhotoQueueItem", (c) => c.requeuePhotoQueueItem(O, I), "POST", `/v1/private/orgs/${O}/inventory/${I}/photo-queue/requeue`],
+  ["startBotConnect", (c) => c.startBotConnect({ name: "shelf-bot", org: "acme", agentKind: "openclaw" }), "POST", "/v1/auth/bot/connect", { clientId: "fabplane-cli", name: "shelf-bot", org: "acme", agentKind: "openclaw" }],
+  ["pollBotConnect", (c) => c.pollBotConnect("cc1"), "POST", "/v1/auth/bot/token", { connectCode: "cc1" }],
+  ["getBotConnectRequest", (c) => c.getBotConnectRequest("ABCD-EFGH"), "GET", "/v1/private/bots/connect/ABCD-EFGH"],
+  ["approveBotConnect", (c) => c.approveBotConnect("ABCD-EFGH", { orgId: O, role: "admin" }), "POST", "/v1/private/bots/connect/ABCD-EFGH/approve", { orgId: O, role: "admin" }],
+  ["denyBotConnect", (c) => c.denyBotConnect("ABCD-EFGH"), "POST", "/v1/private/bots/connect/ABCD-EFGH/deny"],
+  ["listBots", (c) => c.listBots(O), "GET", `/v1/private/orgs/${O}/bots`],
+  ["createBot", (c) => c.createBot(O, { name: "ci", role: "member", agentKind: "ci" }), "POST", `/v1/private/orgs/${O}/bots`, { name: "ci", role: "member", agentKind: "ci" }],
+  ["rotateBotToken", (c) => c.rotateBotToken(O, "b1"), "POST", `/v1/private/orgs/${O}/bots/b1/tokens`],
+  ["deleteBot", (c) => c.deleteBot(O, "b1"), "DELETE", `/v1/private/orgs/${O}/bots/b1`],
   // Existing endpoints.
   ["me", (c) => c.me(), "GET", "/v1/auth/me"],
   ["logout", (c) => c.logout(), "DELETE", "/v1/auth/session"],
@@ -87,21 +96,27 @@ const cases: Array<[string, (c: FabplaneClient) => Promise<unknown>, string, str
 describe("FabplaneClient request shapes", () => {
   for (const [name, invoke, method, path, body] of cases) {
     it(`${name} → ${method} ${path}`, async () => {
-      const { calls, fetch } = recorder((call) => (call.url.includes("/images/img1") && call.method === "GET" ? new Response(null, { status: 302, headers: { location: "https://s.example/x" } }) : json({ ok: true })));
+      const { calls, fetch } = recorder((call) =>
+        call.url.includes("/images/img1") && call.method === "GET"
+          ? new Response(null, { status: 302, headers: { location: "https://s.example/x" } })
+          : call.url.endsWith("/v1/auth/bot/token")
+            ? json({ error: "authorization_pending" }, 428)
+            : json({ ok: true }),
+      );
       const client = new FabplaneClient({ origin: "https://api.example.test/", token: "fpk_abc", fetch });
       await invoke(client);
       assert.equal(calls.length, 1);
       const call = calls[0]!;
       assert.equal(call.method, method);
       assert.equal(call.url, `https://api.example.test${path}`);
-      const anonymous = ["publicCatalog", "config"].includes(name);
+      const anonymous = ["publicCatalog", "config", "startBotConnect", "pollBotConnect"].includes(name);
       assert.equal(call.headers["authorization"], anonymous ? undefined : "Bearer fpk_abc");
       if (body !== undefined) assert.deepEqual(call.body, body);
     });
   }
 
   it("covers every documented operation plus the pre-contract endpoints", () => {
-    assert.ok(cases.length >= 46 + 8);
+    assert.ok(cases.length >= 55 + 8);
   });
 });
 
@@ -268,5 +283,39 @@ describe("meUser", () => {
     assert.deepEqual(meUser({ principal: { subject: "s", handle: "maya" }, email: "m@x.test", emailVerified: true, personalOrgId: "o1" }), { subject: "s", handle: "maya", email: "m@x.test", emailVerified: true, personalOrgId: "o1" });
     assert.deepEqual(meUser({ principal: null, user: { subject: "s", personalOrgId: "o2" } }), { subject: "s", personalOrgId: "o2" });
     assert.equal(meUser({ principal: null }), null);
+  });
+});
+
+describe("bot connect polling", () => {
+  const start = { connectCode: "cc", userCode: "ABCD-EFGH", verificationUri: "v", verificationUriComplete: "v?code=ABCD-EFGH", expiresIn: 900, interval: 5 };
+  const bot = { id: "b", orgId: "o", name: "n", agentKind: "openclaw", role: "member", createdBy: null, createdAt: "t", lastUsedAt: null };
+
+  it("maps 428 pending, 429 slow_down, 400 denied/expired and 200", async () => {
+    const answers = [json({ error: "authorization_pending" }, 428), json({ error: "slow_down" }, 429), json({ error: "access_denied" }, 400), json({ error: "expired_token" }, 400), json({ accessToken: "fpb_x", tokenType: "bearer", bot, org: { id: "o", slug: "s", name: "S", memberCount: 1 } })];
+    const { fetch } = recorder(() => answers.shift()!);
+    const c = new FabplaneClient({ fetch });
+    assert.deepEqual(await c.pollBotConnect("cc"), { status: "pending" });
+    assert.deepEqual(await c.pollBotConnect("cc"), { status: "slow_down" });
+    assert.deepEqual(await c.pollBotConnect("cc"), { status: "error", error: "access_denied" });
+    assert.deepEqual(await c.pollBotConnect("cc"), { status: "error", error: "expired_token" });
+    const t = await c.pollBotConnect("cc");
+    assert.equal(t.status === "token" && t.token.accessToken, "fpb_x");
+  });
+
+  it("waitForBotConnect backs off on slow_down and reports denial clearly", async () => {
+    const answers = [json({ error: "authorization_pending" }, 428), json({ error: "slow_down" }, 429), json({ accessToken: "fpb_y", tokenType: "bearer", bot, org: { id: "o", slug: "s", name: "S", memberCount: 1 } })];
+    const { fetch } = recorder(() => answers.shift()!);
+    const sleeps: number[] = [];
+    const token = await new FabplaneClient({ fetch }).waitForBotConnect(start, { sleep: async (ms) => void sleeps.push(ms) });
+    assert.equal(token.accessToken, "fpb_y");
+    assert.deepEqual(sleeps, [5000, 5000, 10000]);
+    const denied = recorder(() => json({ error: "access_denied" }, 400));
+    await assert.rejects(new FabplaneClient({ fetch: denied.fetch }).waitForBotConnect(start, { sleep: async () => {} }), /denied in the dashboard/);
+  });
+
+  it("meUser marks bots", () => {
+    const me = meUser({ principal: { subject: "bot:b", handle: "n", kind: "bot" }, bot: bot as never, personalOrgId: undefined as never });
+    assert.equal(me?.kind, "bot");
+    assert.equal(me?.bot?.id, "b");
   });
 });

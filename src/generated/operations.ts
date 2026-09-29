@@ -3,6 +3,11 @@
 export type OperationInfo = { operationId: string; method: string; path: string };
 
 export const operations: readonly OperationInfo[] = [
+  { operationId: "startBotConnect", method: "POST", path: "/v1/auth/bot/connect" },
+  { operationId: "pollBotConnect", method: "POST", path: "/v1/auth/bot/token" },
+  { operationId: "getBotConnectRequest", method: "GET", path: "/v1/private/bots/connect/{userCode}" },
+  { operationId: "approveBotConnect", method: "POST", path: "/v1/private/bots/connect/{userCode}/approve" },
+  { operationId: "denyBotConnect", method: "POST", path: "/v1/private/bots/connect/{userCode}/deny" },
   { operationId: "getInvite", method: "GET", path: "/v1/private/invites/{token}" },
   { operationId: "acceptInvite", method: "POST", path: "/v1/private/invites/{token}/accept" },
   { operationId: "getMe", method: "GET", path: "/v1/private/me" },
@@ -11,6 +16,10 @@ export const operations: readonly OperationInfo[] = [
   { operationId: "getOrg", method: "GET", path: "/v1/private/orgs/{orgId}" },
   { operationId: "deleteOrg", method: "DELETE", path: "/v1/private/orgs/{orgId}" },
   { operationId: "updateOrg", method: "PATCH", path: "/v1/private/orgs/{orgId}" },
+  { operationId: "listBots", method: "GET", path: "/v1/private/orgs/{orgId}/bots" },
+  { operationId: "createBot", method: "POST", path: "/v1/private/orgs/{orgId}/bots" },
+  { operationId: "deleteBot", method: "DELETE", path: "/v1/private/orgs/{orgId}/bots/{botId}" },
+  { operationId: "rotateBotToken", method: "POST", path: "/v1/private/orgs/{orgId}/bots/{botId}/tokens" },
   { operationId: "listCarts", method: "GET", path: "/v1/private/orgs/{orgId}/carts" },
   { operationId: "createCart", method: "POST", path: "/v1/private/orgs/{orgId}/carts" },
   { operationId: "getCart", method: "GET", path: "/v1/private/orgs/{orgId}/carts/{cartId}" },
