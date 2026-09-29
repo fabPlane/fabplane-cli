@@ -43,8 +43,8 @@ fabplane carts show <cartId> --json
 fabplane inventory photos queue --json
 fabplane inventory photos claim --limit 5 --worker hermes --json
 fabplane inventory photos attach <itemId> --url <image URL> --source-url <product page URL>
-fabplane inventory photos skip <itemId> --note "<why>"
-fabplane inventory photos retry <itemId> --note "<what failed>"
+fabplane inventory photos skip <itemId> --lease-token <leaseToken> --note "<why>"
+fabplane inventory photos retry <itemId> --lease-token <leaseToken> --note "<what failed>"
 ```
 
 ## Procedure
@@ -70,12 +70,14 @@ fabplane inventory photos retry <itemId> --note "<what failed>"
 ### Photo backfill
 
 1. Claim work: `fabplane inventory photos claim --limit 5 --worker hermes --json`. Only touch claimed items.
+   Keep each item's `leaseToken` and pass it to `skip` / `retry`. If they answer "lease lost", another
+   worker has the item now: leave it alone.
 2. For each item, search by MPN + manufacturer (then name and attributes) for the product image, preferring
    the manufacturer's page, then a major distributor's page.
 3. Look at the image and check it matches the item (form factor, pin/connector count, colour).
 4. Matches: `fabplane inventory photos attach <itemId> --url <image URL> --source-url <product page URL>`.
-5. Not identifiable or no trustworthy photo: `fabplane inventory photos skip <itemId> --note "<why>"`.
-6. Transient failure: `fabplane inventory photos retry <itemId> --note "<what failed>"`.
+5. Not identifiable or no trustworthy photo: `fabplane inventory photos skip <itemId> --lease-token <leaseToken> --note "<why>"`.
+6. Transient failure: `fabplane inventory photos retry <itemId> --lease-token <leaseToken> --note "<what failed>"`.
 7. Report one line per item: `name → attached (source host) | skipped (reason) | retry (reason)`.
 
 ## Pitfalls

@@ -70,7 +70,8 @@ nothing is processed server-side.
 
 1. `fabplane inventory photos queue --json` shows the counts.
    `fabplane inventory photos claim --limit 5 --worker openclaw --json` leases up to 5 items for 15 minutes.
-   Only work on items you claimed.
+   Only work on items you claimed. Each claimed item has a `leaseToken`; pass it to `skip` and `retry`.
+   If one of them answers "lease lost", another worker has that item now: leave it alone.
 2. For each claimed item, find a clear product photo of **that exact part**:
    - Search by MPN + manufacturer first; fall back to the name and attributes.
    - Prefer the manufacturer's product page, then a major distributor's product page. Marketplace
@@ -84,10 +85,10 @@ nothing is processed server-side.
    `fabplane inventory photos attach <itemId> --url <direct image URL> --source-url <product page URL>`.
    The CLI downloads it, checks it is an image of at most 10 MiB, and uploads it; the item leaves the queue.
 4. If the part cannot be identified or there is no trustworthy photo:
-   `fabplane inventory photos skip <itemId> --note "<why>"` (e.g. unlabeled bag, salvaged assembly,
+   `fabplane inventory photos skip <itemId> --lease-token <leaseToken> --note "<why>"` (e.g. unlabeled bag, salvaged assembly,
    the team's own board). Someone can photograph it later with `photos attach <itemId> --file <photo>`.
 5. If the search failed for a transient reason:
-   `fabplane inventory photos retry <itemId> --note "<what failed>"`.
+   `fabplane inventory photos retry <itemId> --lease-token <leaseToken> --note "<what failed>"`.
 6. Never attach a different part's photo. A skip is better than a wrong image.
 7. Reply with one line per item: `name → attached (source host) | skipped (reason) | retry (reason)`.
 
