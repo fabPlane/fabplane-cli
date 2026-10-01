@@ -2,13 +2,13 @@
   "source": "fabdesk",
   "fabdeskVersion": "0.2.0",
   "generatedAt": "2026-09-28",
-  "toolCount": 50,
+  "toolCount": 75,
   "tools": [
     {
       "name": "load_toolset",
       "toolset": "core",
       "title": "Load a toolset",
-      "description": "Enable an additional group of fabdesk tools for this session. Toolsets: project (read/write project files, sketches, board settings, adopt a KiCad board), circuit (query the board, search footprint libraries), route (routing status/cancel/unroute/scope), kicad (board stats), verify (ERC, release gate), render (schematic/PCB SVG, 3D GLB), export (gerbers, drill, pick-and-place, BOM, netlist, zip), sim (SPICE netlist and simulation), app (screenshot and drive the fabPlane desktop app window on the user's behalf: find/click/type, switch project, tab, thread, send chat messages, control Route Cinema; needs the app running in dev or with FABDESK_AUTOMATION=1 — not for diagnosing a route: route_status and reports/drc.json say more than a screenshot). Call this before using a tool from that group; the core tools (project_status, circuit_build, circuit_place, circuit_read_errors, route_run, verify_drc, render_board) are always available.",
+      "description": "Enable an additional group of fabdesk tools for this session. Available toolsets are project, circuit, route, kicad, verify, render, export, sim, app, and shopping (fabplane.com shopping list and team inventory). Core tools are always available.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -26,7 +26,8 @@
               "render",
               "export",
               "sim",
-              "app"
+              "app",
+              "shopping"
             ]
           }
         },
@@ -42,10 +43,33 @@
       "longRunning": false
     },
     {
+      "name": "pcb_environment",
+      "toolset": "core",
+      "title": "Inspect the PCB workbench and script interface",
+      "description": "Return current project paths, kicad-cli identity, FabPCB bridge status, desktop-UI availability, and available interfaces.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
       "name": "project_status",
       "toolset": "core",
       "title": "Project status",
-      "description": "Summarise the current project: id, directory, board settings, which artefacts exist (circuit.netlist.json, board.kicad_pcb, board.kicad_sch), last build error count, latest route run and available reports. Call it first to learn the file contract before writing circuit.netlist.json.",
+      "description": "Summarise the selected project: directory, board settings, native KiCad files, latest source/compiler build, persisted release evidence and staleness, route and verification state, sketches, and reports. Does not run ERC, DRC, or release.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -107,14 +131,14 @@
       "name": "circuit_place",
       "toolset": "core",
       "title": "Place footprints",
-      "description": "Move footprints on the built board: each entry is a reference with its new origin in mm in KiCad board coordinates (y downwards; the outline's corner is NOT at 0,0 — read it with circuit_query select=outline first) and an optional rotation in degrees. Use it when the autoplacer left parts off the board or in a corner (DRC copper_edge_clearance / courtyards_overlap), or to put connectors on an edge before route_run. Tracks are not moved: unroute affected nets and route again afterwards. Rebuilding keeps placements.",
+      "description": "Move built-board footprints to explicit KiCad board coordinates in millimetres, with optional rotation. Tracks are not moved. Returns moved and missing references.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": {
           "placements": {
             "minItems": 1,
-            "maxItems": 200,
+            "maxItems": 1000,
             "type": "array",
             "items": {
               "type": "object",
@@ -164,7 +188,7 @@
       "name": "circuit_read_errors",
       "toolset": "core",
       "title": "Read build errors",
-      "description": "Return the errors and warnings of the last circuit_build (from reports/build.json). Use it to decide what to fix in circuit.netlist.json.",
+      "description": "Return errors and warnings from reports/build.json.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -187,7 +211,7 @@
       "name": "route_run",
       "toolset": "core",
       "title": "Autoroute the board",
-      "description": "Autoroute board.kicad_pcb on the design server (capacity: the built-in JS router; freerouting: internal builds only). Streams progress frames to the app, persists them under .fabdesk/runs/<runId>/frames.jsonl, applies the tracks to the board as one undo entry and returns which nets stayed open plus via/track counts. Requires circuit_build. Use route_unroute + route_run with onlyConnections to redo specific nets. If routing reports a blocked endpoint or board-edge violation, move the named footprint inward or enlarge the board, rebuild, and retry; never split or rename an electrical net merely to bypass a routing failure.",
+      "description": "Start a durable asynchronous autoroute against a revision-bound board snapshot and return a run ID immediately. Progress, diagnostics and artifacts remain available through route_status after this request ends. applyPolicy=auto (default) atomically applies only while the starting PCB revision is current; manual preserves a validated native candidate for route_apply. onlyConnections limits the run to named nets.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -207,10 +231,81 @@
             "maximum": 1800000
           },
           "onlyConnections": {
-            "description": "Route only these nets (after route_unroute)",
+            "description": "Route only these leftover nets. The DSN network lists just those nets; other copper stays as obstacles. Via padstacks include existing board via sizes so sessions round-trip. If nothing routes, the result lists the leftover pads.",
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "targets": {
+            "description": "Selected nets or exact remaining endpoint pairs",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "net": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "from": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "to": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "required": [
+                "net"
+              ]
+            }
+          },
+          "rules": {
+            "description": "Explicit routing width, clearance, via and zone rules; the router uses the board's enabled copper layers",
+            "type": "object",
+            "properties": {
+              "widthMm": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "clearanceMm": {
+                "type": "number",
+                "minimum": 0
+              },
+              "viaDiameterMm": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "viaDrillMm": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "refillZones": {
+                "type": "boolean"
+              }
             }
           },
           "settings": {
@@ -220,6 +315,15 @@
               "type": "string"
             },
             "additionalProperties": {}
+          },
+          "applyPolicy": {
+            "description": "auto applies only if the starting PCB revision is still current; manual preserves a candidate for route_apply",
+            "default": "auto",
+            "type": "string",
+            "enum": [
+              "auto",
+              "manual"
+            ]
           },
           "project": {
             "description": "Project id, name or absolute path. Optional when the session already has a current project.",
@@ -238,7 +342,7 @@
       "name": "verify_drc",
       "toolset": "core",
       "title": "Run KiCad DRC",
-      "description": "Run KiCad design rule check on board.kicad_pcb. Writes reports/drc.json and returns error/warning/unconnected counts with the first violations. Requires kicad-cli and circuit_build.",
+      "description": "Run KiCad design rule check on board.kicad_pcb. When parity is enabled, require a complete saved schematic hierarchy and bind parity evidence to its aggregate revision. Writes reports/drc.json with actionable geometry.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -253,16 +357,25 @@
             ]
           },
           "schematicParity": {
-            "description": "Also check PCB↔schematic parity (requires libSource for generated symbols)",
-            "default": false,
+            "description": "Include PCB↔schematic parity checks",
+            "default": true,
             "type": "boolean"
           },
           "limit": {
-            "description": "Max violations to include in the text summary",
+            "description": "Max violations per category in the response (maximum 200). Every violation is in reports/drc.json regardless; this only bounds the inline sample.",
             "default": 30,
             "type": "integer",
             "minimum": 1,
             "maximum": 200
+          },
+          "responseMode": {
+            "description": "summary: counts, per-rule totals and a byte-bounded sample without per-violation geometry rows. full: the complete enriched violations inline, which costs roughly 1 KiB per violation.",
+            "default": "summary",
+            "type": "string",
+            "enum": [
+              "summary",
+              "full"
+            ]
           },
           "project": {
             "description": "Project id, name or absolute path. Optional when the session already has a current project.",
@@ -335,7 +448,7 @@
       "name": "project_read_file",
       "toolset": "project",
       "title": "Read a project file",
-      "description": "Read a text file inside the project directory (e.g. circuit.netlist.json, reports/drc.json, fabdesk.json). Paths are relative to the project and may not leave it. Binary files are reported by size only; use project_list_sketches for images.",
+      "description": "Read a text file inside the project directory. Paths are relative to the project and may not leave it. Binary files are reported by size only; project_list_sketches returns image content.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -372,7 +485,7 @@
       "name": "project_write_file",
       "toolset": "project",
       "title": "Write a project file",
-      "description": "Create or overwrite a text file inside the project directory, creating parent directories. Use it to write circuit.netlist.json. Paths are relative to the project and may not leave it; fabdesk.json must be changed through project_set_board.",
+      "description": "Create or overwrite a UTF-8 text file inside the project directory. Paths are relative to the project and may not leave it; fabdesk.json is managed by project_set_board.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -408,7 +521,7 @@
       "name": "project_list_sketches",
       "toolset": "project",
       "title": "List sketches",
-      "description": "List the user's sketch images (PNG/JPEG/SVG under sketches/) with absolute paths so you can open them with your image reading capability. Sketches describe the desired board; interpret them before writing circuit.netlist.json.",
+      "description": "List PNG, JPEG, and SVG files under sketches/ with absolute paths and image content for raster formats.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -431,7 +544,7 @@
       "name": "project_set_board",
       "toolset": "project",
       "title": "Set board settings",
-      "description": "Update board constraints in fabdesk.json: layer count (1-8), outline width/height in mm, the router to use, and optionally a prefab blank template. The size becomes the board outline the next circuit_build draws (when circuit.netlist.json has no board of its own); board.rules reach the KiCad board on the next build; the router is used by route_run. template=\"viagrid-9055\" sets up Opulo's 90 x 55 mm Viagrid blank: circuit_build then draws the blank itself (outline, 180 factory vias as free vias, 4 mounting holes, 0.2 mm track and clearance rules) instead of the netlist's board, and route_run uses the laser-prefab solver so layers change only through the factory vias, which it claims. template=\"none\" removes it.",
+      "description": "Update fabdesk.json board settings: layer count, outline dimensions, router, and optional prefab blank template. template=\"viagrid-9055\" represents the Opulo 90 x 55 mm blank with its factory vias, mounting holes, and 0.2 mm track and clearance rules; template=\"none\" removes the template.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -481,7 +594,7 @@
       "name": "project_import_kicad",
       "toolset": "project",
       "title": "Adopt a KiCad board",
-      "description": "Copy an existing .kicad_pcb (and its .kicad_pro / .kicad_sch when they sit next to it) into the project as board.kicad_pcb, board.kicad_pro and board.kicad_sch, so route_run, verify_drc, render and export tools work on it. The board becomes the design; a later circuit_build updates it from circuit.netlist.json (footprints the netlist does not name are removed). Sets fabdesk.json board.layers from the board when kicad-cli is available.",
+      "description": "Copy an existing .kicad_pcb and adjacent .kicad_pro/.kicad_sch files into the canonical project paths. The imported board becomes the project design. Also records its copper-layer count when kicad-cli is available.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -512,7 +625,7 @@
       "name": "circuit_query",
       "toolset": "circuit",
       "title": "Query the board",
-      "description": "List what the board holds, straight from KiCad, as a compact table: components (ref, value, footprint, position), nets (name, pad count), pads (component, number, net, position, size), vias (position, net; a blank's free vias have an empty net), tracks (routed tracks/arcs/vias per net), unrouted (the airlines still open) or outline (the Edge.Cuts bounding box in mm — read it before circuit_place: the outline's corner is not at 0,0). Optional substring filter on names. Requires circuit_build.",
+      "description": "List board contents from KiCad as a compact table: components, nets, pads, vias, tracks, unrouted connections, or the board outline. Supports an optional substring filter.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -560,7 +673,7 @@
       "name": "circuit_search_parts",
       "toolset": "circuit",
       "title": "Search KiCad libraries",
-      "description": "Search the KiCad footprint or symbol libraries the design server can see. Footprint results go in component `footprint`; symbol results split at the colon into `libSource: {lib, part}` so circuit_build can draw the generated schematic.",
+      "description": "Search the KiCad symbol or footprint libraries available to the native design server. Returns exact library identifiers, descriptions, and role suitability for native schematic and PCB operations.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -576,6 +689,13 @@
             "enum": [
               "footprint",
               "symbol"
+            ]
+          },
+          "role": {
+            "description": "Optional functional role used to rank matching parts",
+            "type": "string",
+            "enum": [
+              "power-only-usb-c"
             ]
           },
           "limit": {
@@ -600,7 +720,7 @@
       "name": "circuit_describe_part",
       "toolset": "circuit",
       "title": "Describe a KiCad part",
-      "description": "Inspect one exact KiCad symbol or footprint before wiring or placing it. Symbols return pin numbers, names and electrical types; footprints return pad numbers, anchor-relative positions and sizes in millimetres.",
+      "description": "Return details for one exact KiCad symbol or footprint. Symbols include pin numbers, names and electrical types; footprints include pad numbers, anchor-relative positions and sizes in millimetres.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -632,10 +752,2824 @@
       "longRunning": false
     },
     {
+      "name": "circuit_check_part_compatibility",
+      "toolset": "circuit",
+      "title": "Check symbol and footprint compatibility",
+      "description": "Read-only pre-placement check for one exact KiCad symbol/footprint pair. Reports pin-to-pad mappings, mechanical/fabrication facts, and optional role suitability without modifying a project.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "symbolLibId": {
+            "description": "Exact symbol Library:Name",
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 300
+          },
+          "footprintLibId": {
+            "description": "Exact footprint Library:Name",
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 300
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "power-only-usb-c"
+            ]
+          }
+        },
+        "required": [
+          "symbolLibId",
+          "footprintLibId"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "design_inspect",
+      "toolset": "circuit",
+      "title": "Inspect saved native design",
+      "description": "Inspect the exact complete saved schematic hierarchy and board revision in one result. Defaults to compact whole-project schematic truth; optionally expands one sheet's live KiCad IPC authoring details. Saved-file ERC/parity and live session diagnostics remain separately labelled. mechanical=true adds per-footprint 3D model coverage, board-space bounds, heights, assembly bounds and broad-phase overlap candidates measured from the packaged runtime.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "refreshChecks": {
+            "description": "Run packaged-kicad-cli full-severity ERC and parity-enabled DRC for these exact saved files",
+            "default": true,
+            "type": "boolean"
+          },
+          "schematicDetail": {
+            "default": "summary",
+            "type": "string",
+            "enum": [
+              "summary",
+              "authoring",
+              "full"
+            ]
+          },
+          "responseMode": {
+            "description": "Return the complete inspection inline, or a bounded reference to the complete saved report",
+            "default": "full",
+            "type": "string",
+            "enum": [
+              "full",
+              "report-reference"
+            ]
+          },
+          "mechanical": {
+            "description": "Measure per-footprint 3D model coverage, transformed bounds and heights with packaged kicad-cli (cached by PCB and model-file content)",
+            "default": false,
+            "type": "boolean"
+          },
+          "sheet": {
+            "description": "Sheet path, name, or native filename for bounded authoring expansion",
+            "type": "string",
+            "minLength": 1
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "pcb_inspect",
+      "toolset": "circuit",
+      "title": "Inspect a PCB region",
+      "description": "Inspect a bounded part of the saved native PCB by item kind, reference, net, layer, rectangle, or point/radius. Layers accept F.Cu, BL_F_Cu, or the KiCad enum number (3); vias occupy every copper layer they span. board_geometry returns board-owned outline and graphic shapes; request footprint_geometry explicitly for footprint-owned courtyard and fabrication primitives, and include zones to see pour occupancy. islandsOfNet returns the copper islands of those nets (pad/via/track/zone connectivity). Returns compact exact millimetre coordinates, AABB, source revision, bounds, and a truncation indicator.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kinds": {
+            "default": [
+              "components",
+              "pads",
+              "tracks",
+              "vias",
+              "unrouted"
+            ],
+            "minItems": 1,
+            "maxItems": 11,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "components",
+                "nets",
+                "pads",
+                "vias",
+                "tracks",
+                "zones",
+                "keepouts",
+                "board_geometry",
+                "footprint_geometry",
+                "texts",
+                "unrouted"
+              ]
+            }
+          },
+          "references": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "nets": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "layers": {
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              ]
+            }
+          },
+          "region": {
+            "description": "Inclusive PCB rectangle in millimetres. Items are matched by their body, not their centre: a pad or via whose copper reaches into the rectangle is reported, and a zone covering it is reported. Pad rows carry no rotation, so a pad is matched by its largest dimension in both axes — occupancy is never under-reported and a long thin pad may be reported conservatively.",
+            "type": "object",
+            "properties": {
+              "minX": {
+                "type": "number"
+              },
+              "minY": {
+                "type": "number"
+              },
+              "maxX": {
+                "type": "number"
+              },
+              "maxY": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "minX",
+              "minY",
+              "maxX",
+              "maxY"
+            ]
+          },
+          "near": {
+            "description": "Items touching this point/radius in millimetres",
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "radius": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1000
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "radius"
+            ]
+          },
+          "limitPerKind": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "islandsOfNet": {
+            "description": "Return connected copper islands for these nets (pad/via/track/zone graph)",
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "native_edit_transaction",
+      "toolset": "circuit",
+      "title": "Preview or apply an atomic native edit",
+      "description": "Preview or atomically apply explicit native KiCad schematic, footprint, outline, copper, zone, keepout, text, and graphic changes. Revision mismatches reject the transaction; rejected changes restore the prior files.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "default": "preview",
+            "type": "string",
+            "enum": [
+              "preview",
+              "apply"
+            ]
+          },
+          "expectedSchematicRevision": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedPcbRevision": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schematic": {
+            "type": "object",
+            "properties": {
+              "symbols": {
+                "maxItems": 200,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "libId": {
+                      "type": "string",
+                      "minLength": 3
+                    },
+                    "reference": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    },
+                    "footprint": {
+                      "type": "string"
+                    },
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "unit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "bodyStyle": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "fields": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "libId",
+                    "reference",
+                    "value",
+                    "position"
+                  ]
+                }
+              },
+              "symbolUpdates": {
+                "maxItems": 200,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "reference": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "newReference": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "value": {
+                      "type": "string"
+                    },
+                    "footprint": {
+                      "type": "string"
+                    },
+                    "fields": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "reference"
+                  ]
+                }
+              },
+              "connections": {
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "nodes": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "reference": {
+                            "type": "string"
+                          },
+                          "pin": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "reference",
+                          "pin"
+                        ]
+                      }
+                    },
+                    "label": {
+                      "type": "string",
+                      "enum": [
+                        "local",
+                        "global",
+                        "none"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "nodes"
+                  ]
+                }
+              },
+              "wires": {
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "start": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "end": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "end"
+                  ]
+                }
+              },
+              "localLabels": {
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "position"
+                  ]
+                }
+              },
+              "globalLabels": {
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "position"
+                  ]
+                }
+              },
+              "junctions": {
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "noConnects": {
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "texts": {
+                "maxItems": 200,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "position"
+                  ]
+                }
+              },
+              "deleteItemIds": {
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "outline": {
+            "type": "object",
+            "properties": {
+              "points": {
+                "minItems": 3,
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "replace": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "points"
+            ]
+          },
+          "footprints": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "rotation": {
+                  "type": "number"
+                },
+                "flip": {
+                  "type": "boolean"
+                },
+                "lock": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          },
+          "geometry": {
+            "type": "object",
+            "properties": {
+              "tracks": {
+                "maxItems": 5000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "start": {
+                      "description": "Exact millimetre point or a footprint pad resolved to its exact saved-board position",
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "reference": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "pad": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "pad"
+                          ]
+                        }
+                      ]
+                    },
+                    "end": {
+                      "description": "Exact millimetre point or a footprint pad resolved to its exact saved-board position",
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "reference": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "pad": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "pad"
+                          ]
+                        }
+                      ]
+                    },
+                    "width": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "layer": {
+                      "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 3
+                        }
+                      ]
+                    },
+                    "net": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "end",
+                    "width",
+                    "layer"
+                  ]
+                }
+              },
+              "vias": {
+                "maxItems": 2000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "diameter": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "drill": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "layers": {
+                      "minItems": 2,
+                      "type": "array",
+                      "items": {
+                        "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 3
+                          }
+                        ]
+                      }
+                    },
+                    "net": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "position",
+                    "diameter",
+                    "drill",
+                    "layers"
+                  ]
+                }
+              },
+              "zones": {
+                "maxItems": 200,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "points": {
+                      "minItems": 3,
+                      "maxItems": 5000,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y"
+                        ]
+                      }
+                    },
+                    "holes": {
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "minItems": 3,
+                        "maxItems": 5000,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ]
+                        }
+                      }
+                    },
+                    "layers": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 3
+                          }
+                        ]
+                      }
+                    },
+                    "net": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "clearance": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "minThickness": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "priority": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "points",
+                    "layers"
+                  ]
+                }
+              },
+              "keepouts": {
+                "maxItems": 200,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "points": {
+                      "minItems": 3,
+                      "maxItems": 5000,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y"
+                        ]
+                      }
+                    },
+                    "holes": {
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "minItems": 3,
+                        "maxItems": 5000,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ]
+                        }
+                      }
+                    },
+                    "layers": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 3
+                          }
+                        ]
+                      }
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "copper": {
+                      "type": "boolean"
+                    },
+                    "vias": {
+                      "type": "boolean"
+                    },
+                    "tracks": {
+                      "type": "boolean"
+                    },
+                    "pads": {
+                      "type": "boolean"
+                    },
+                    "footprints": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "points",
+                    "layers"
+                  ]
+                }
+              },
+              "texts": {
+                "maxItems": 1000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "layer": {
+                      "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 3
+                        }
+                      ]
+                    },
+                    "size": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "thickness": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "angle": {
+                      "type": "number"
+                    },
+                    "knockout": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "position",
+                    "layer"
+                  ]
+                }
+              },
+              "graphics": {
+                "maxItems": 2000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "segment",
+                        "rectangle",
+                        "arc",
+                        "circle",
+                        "polygon"
+                      ]
+                    },
+                    "layer": {
+                      "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 3
+                        }
+                      ]
+                    },
+                    "start": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "end": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "mid": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "center": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "radiusPoint": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "points": {
+                      "minItems": 3,
+                      "maxItems": 5000,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y"
+                        ]
+                      }
+                    },
+                    "holes": {
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "minItems": 3,
+                        "maxItems": 5000,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ]
+                        }
+                      }
+                    },
+                    "strokeWidth": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "filled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "layer"
+                  ]
+                }
+              },
+              "deleteItemIds": {
+                "maxItems": 5000,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "removeCopperNets": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "native_edit_rollback",
+      "toolset": "circuit",
+      "title": "Rollback the last accepted native edit",
+      "description": "Restore the exact native KiCad files saved before an accepted native_edit_transaction. The current revisions must still match that transaction's after revisions, preventing rollback over newer work.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "transactionId": {
+            "type": "string"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "pcb_edit_copper",
+      "toolset": "circuit",
+      "title": "Atomically edit PCB copper",
+      "description": "Atomically validate and apply native tracks, vias, copper deletion by inspected ID, or removal of named routed nets in one recoverable transaction. The normal mode=apply path validates before saving and restores prior files if rejected; use mode=preview only when a non-mutating forecast is specifically needed. For reroutes, write a project-local JSON candidate and pass candidateFile with removeNets so old copper is replaced in one recoverable transaction. Applying named-net removal without replacement requires an explicit commitRemovalOnly acknowledgement. Track endpoints accept exact millimetre points or semantic {reference,pad} endpoints resolved from the saved board. Rejects stale PCB revisions.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "default": "apply",
+            "type": "string",
+            "enum": [
+              "preview",
+              "apply"
+            ]
+          },
+          "expectedPcbRevision": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "tracks": {
+            "maxItems": 5000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "description": "Exact millimetre point or a footprint pad resolved to its exact saved-board position",
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "reference": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "pad": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "reference",
+                        "pad"
+                      ]
+                    }
+                  ]
+                },
+                "end": {
+                  "description": "Exact millimetre point or a footprint pad resolved to its exact saved-board position",
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "reference": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "pad": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "reference",
+                        "pad"
+                      ]
+                    }
+                  ]
+                },
+                "width": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "layer": {
+                  "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 3
+                    }
+                  ]
+                },
+                "net": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "start",
+                "end",
+                "width",
+                "layer"
+              ]
+            }
+          },
+          "vias": {
+            "maxItems": 2000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "diameter": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "drill": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "layers": {
+                  "minItems": 2,
+                  "type": "array",
+                  "items": {
+                    "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 3
+                      }
+                    ]
+                  }
+                },
+                "net": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "position",
+                "diameter",
+                "drill",
+                "layers"
+              ]
+            }
+          },
+          "candidateFile": {
+            "description": "Project-relative JSON file containing {tracks:[...], vias:[...]}; keeps large generated routes durable and out of the tool-call payload",
+            "type": "string",
+            "minLength": 1
+          },
+          "deleteItemIds": {
+            "maxItems": 5000,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "removeNets": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "commitRemovalOnly": {
+            "description": "Explicitly acknowledge that named-net copper removal should persist without replacement geometry",
+            "default": false,
+            "type": "boolean"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "pcb_edit_graphics",
+      "toolset": "circuit",
+      "title": "Atomically edit PCB outline and graphics",
+      "description": "Atomically validate and apply a native board outline, zones, keepouts, text, graphics, or deletion by inspected ID in one recoverable transaction. The normal mode=apply path validates before saving and restores prior files if rejected; use mode=preview only when a non-mutating forecast is specifically needed. Uses millimetres and rejects stale PCB revisions.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "default": "apply",
+            "type": "string",
+            "enum": [
+              "preview",
+              "apply"
+            ]
+          },
+          "expectedPcbRevision": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "outline": {
+            "type": "object",
+            "properties": {
+              "points": {
+                "minItems": 3,
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "replace": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "points"
+            ]
+          },
+          "zones": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "minItems": 3,
+                  "maxItems": 5000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y"
+                    ]
+                  }
+                },
+                "holes": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "minItems": 3,
+                    "maxItems": 5000,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    }
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 3
+                      }
+                    ]
+                  }
+                },
+                "net": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string"
+                },
+                "clearance": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "minThickness": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "priority": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "points",
+                "layers"
+              ]
+            }
+          },
+          "keepouts": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "minItems": 3,
+                  "maxItems": 5000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y"
+                    ]
+                  }
+                },
+                "holes": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "minItems": 3,
+                    "maxItems": 5000,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    }
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 3
+                      }
+                    ]
+                  }
+                },
+                "name": {
+                  "type": "string"
+                },
+                "copper": {
+                  "type": "boolean"
+                },
+                "vias": {
+                  "type": "boolean"
+                },
+                "tracks": {
+                  "type": "boolean"
+                },
+                "pads": {
+                  "type": "boolean"
+                },
+                "footprints": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "points",
+                "layers"
+              ]
+            }
+          },
+          "texts": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "layer": {
+                  "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 3
+                    }
+                  ]
+                },
+                "size": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "thickness": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "angle": {
+                  "type": "number"
+                },
+                "knockout": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "text",
+                "position",
+                "layer"
+              ]
+            }
+          },
+          "graphics": {
+            "maxItems": 2000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "segment",
+                    "rectangle",
+                    "arc",
+                    "circle",
+                    "polygon"
+                  ]
+                },
+                "layer": {
+                  "description": "KiCad layer name such as F.Cu, B.Cu, F.SilkS, B.SilkS, or Edge.Cuts; numeric IDs remain accepted",
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 3
+                    }
+                  ]
+                },
+                "start": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "end": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "mid": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "center": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "radiusPoint": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "points": {
+                  "minItems": 3,
+                  "maxItems": 5000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y"
+                    ]
+                  }
+                },
+                "holes": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "minItems": 3,
+                    "maxItems": 5000,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    }
+                  }
+                },
+                "strokeWidth": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "filled": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "kind",
+                "layer"
+              ]
+            }
+          },
+          "deleteItemIds": {
+            "maxItems": 5000,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "schematic_inspect",
+      "toolset": "circuit",
+      "title": "Inspect native schematic",
+      "description": "Inspect the complete saved native schematic hierarchy. The default is a compact packaged-KiCad project summary; request authoring or full for bounded live KiCad IPC details on the root/current or one selected sheet. Live session diagnostics are never presented as saved-file ERC.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "detail": {
+            "description": "summary=count/check overview; authoring=symbols and pins; full=all wires, labels, nets and deletion IDs",
+            "default": "summary",
+            "type": "string",
+            "enum": [
+              "summary",
+              "authoring",
+              "full"
+            ]
+          },
+          "sheet": {
+            "description": "For authoring/full detail, select one hierarchy path, sheet name, or native filename",
+            "type": "string",
+            "minLength": 1
+          },
+          "sheetOffset": {
+            "description": "First hierarchy summary sheet to return",
+            "default": 0,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "sheetLimit": {
+            "description": "Maximum per-sheet summary rows",
+            "default": 25,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "schematic_edit",
+      "toolset": "circuit",
+      "title": "Edit native schematic",
+      "description": "Apply one undoable edit batch directly to board.kicad_sch. Supports rotated or mirrored library symbols, symbol movement, safely labelled pin stubs, explicit wires, local and global labels, junctions, no-connect markers, notes, and deletion by inspected ID. Creates native KiCad files when absent. Coordinates are millimetres on KiCad's 1.27 mm schematic grid.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "symbols": {
+            "default": [],
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "libId": {
+                  "description": "Exact KiCad symbol ID, such as Device:R",
+                  "type": "string",
+                  "minLength": 3
+                },
+                "reference": {
+                  "description": "Unique annotated reference, such as R1",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "string"
+                },
+                "footprint": {
+                  "description": "Exact KiCad footprint ID; omit or use an empty string for non-physical symbols such as power flags",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": ""
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 3
+                    }
+                  ]
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "description": "Schematic X coordinate in millimetres",
+                      "type": "number"
+                    },
+                    "y": {
+                      "description": "Schematic Y coordinate in millimetres",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "unit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "bodyStyle": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "rotation": {
+                  "default": 0,
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "const": 0
+                    },
+                    {
+                      "type": "number",
+                      "const": 90
+                    },
+                    {
+                      "type": "number",
+                      "const": 180
+                    },
+                    {
+                      "type": "number",
+                      "const": 270
+                    }
+                  ]
+                },
+                "mirrorX": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "mirrorY": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "fields": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "libId",
+                "reference",
+                "value",
+                "position"
+              ]
+            }
+          },
+          "symbolUpdates": {
+            "default": [],
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "newReference": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "description": "Schematic X coordinate in millimetres",
+                      "type": "number"
+                    },
+                    "y": {
+                      "description": "Schematic Y coordinate in millimetres",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "rotation": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "const": 0
+                    },
+                    {
+                      "type": "number",
+                      "const": 90
+                    },
+                    {
+                      "type": "number",
+                      "const": 180
+                    },
+                    {
+                      "type": "number",
+                      "const": 270
+                    }
+                  ]
+                },
+                "mirrorX": {
+                  "type": "boolean"
+                },
+                "mirrorY": {
+                  "type": "boolean"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "footprint": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": ""
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 3
+                    }
+                  ]
+                },
+                "fields": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          },
+          "connections": {
+            "default": [],
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "Electrical net name",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "nodes": {
+                  "description": "Symbol pin endpoints joined electrically by matching labels on short visible wire stubs",
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "reference": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "pin": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "reference",
+                      "pin"
+                    ]
+                  }
+                },
+                "label": {
+                  "default": "local",
+                  "type": "string",
+                  "enum": [
+                    "local",
+                    "global",
+                    "none"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "nodes"
+              ]
+            }
+          },
+          "wires": {
+            "default": [],
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "description": "Schematic X coordinate in millimetres",
+                      "type": "number"
+                    },
+                    "y": {
+                      "description": "Schematic Y coordinate in millimetres",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "end": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "description": "Schematic X coordinate in millimetres",
+                      "type": "number"
+                    },
+                    "y": {
+                      "description": "Schematic Y coordinate in millimetres",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            }
+          },
+          "localLabels": {
+            "default": [],
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "description": "Schematic X coordinate in millimetres",
+                      "type": "number"
+                    },
+                    "y": {
+                      "description": "Schematic Y coordinate in millimetres",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "required": [
+                "text",
+                "position"
+              ]
+            }
+          },
+          "globalLabels": {
+            "default": [],
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "description": "Schematic X coordinate in millimetres",
+                      "type": "number"
+                    },
+                    "y": {
+                      "description": "Schematic Y coordinate in millimetres",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "required": [
+                "text",
+                "position"
+              ]
+            }
+          },
+          "junctions": {
+            "default": [],
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "description": "Schematic X coordinate in millimetres",
+                  "type": "number"
+                },
+                "y": {
+                  "description": "Schematic Y coordinate in millimetres",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ]
+            }
+          },
+          "noConnects": {
+            "default": [],
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "description": "Schematic X coordinate in millimetres",
+                  "type": "number"
+                },
+                "y": {
+                  "description": "Schematic Y coordinate in millimetres",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ]
+            }
+          },
+          "texts": {
+            "default": [],
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "description": "Schematic X coordinate in millimetres",
+                      "type": "number"
+                    },
+                    "y": {
+                      "description": "Schematic Y coordinate in millimetres",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "required": [
+                "text",
+                "position"
+              ]
+            }
+          },
+          "deleteItemIds": {
+            "default": [],
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "save": {
+            "default": true,
+            "type": "boolean"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "schematic_review",
+      "toolset": "circuit",
+      "title": "Review schematic quality",
+      "description": "Review one explicitly scoped live KiCad sheet for presentation and maintainability findings, while binding the report to the complete saved hierarchy revision. Writes reports/schematic-review.json without changing native files.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sheet": {
+            "description": "Hierarchy path, sheet name, or native filename; default is the current/root sheet",
+            "type": "string",
+            "minLength": 1
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "pcb_update_from_schematic",
+      "toolset": "circuit",
+      "title": "Atomically update PCB from schematic",
+      "description": "Atomically validate and run KiCad's native Update PCB from Schematic. The normal apply=true path performs its own dry-run validation, requires zero PCB↔schematic parity conflicts, and saves the PCB only on success. Use apply=false only when a forecast without PCB changes is specifically needed. Both modes save the live schematic before checking it. Live-session diagnostic errors block the board update but are not saved-file or release-authoritative ERC. Board-only footprints are preserved by default.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "apply": {
+            "description": "True atomically validates, applies, and saves the PCB; false previews without changing the PCB (both save the live schematic)",
+            "default": true,
+            "type": "boolean"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "pcb_define_outline",
+      "toolset": "circuit",
+      "title": "Define PCB outline",
+      "description": "Create a native board.kicad_pcb outer Edge.Cuts boundary. Give widthMm/heightMm for a rectangle at (0,0), or at least three polygon points in mm. Re-running accepts an exact match. replace=true updates only an outline previously created by this tool; a different existing outline fails closed.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "widthMm": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "heightMm": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "points": {
+            "minItems": 3,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ]
+            }
+          },
+          "replace": {
+            "default": false,
+            "type": "boolean"
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "pcb_place",
+      "toolset": "circuit",
+      "title": "Place PCB footprints",
+      "description": "Place native PCB footprints and adjust their silkscreen reference fields at explicit millimetre coordinates. Library geometry is normalized before reference-field edits. Unknown references fail without a partial placement.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "placements": {
+            "minItems": 1,
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "rotation": {
+                  "type": "number"
+                },
+                "flip": {
+                  "type": "boolean"
+                },
+                "lock": {
+                  "type": "boolean"
+                },
+                "referenceField": {
+                  "type": "object",
+                  "properties": {
+                    "visible": {
+                      "type": "boolean"
+                    },
+                    "position": {
+                      "description": "Absolute board position in millimetres",
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    },
+                    "sizeMm": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "maximum": 5
+                    }
+                  }
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "placements"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
       "name": "route_status",
       "toolset": "route",
       "title": "Routing status",
-      "description": "Status of a route run (default: the latest for the project): running/done/failed, open nets, statistics and the frames file path.",
+      "description": "Return compact persisted progress, heartbeat freshness, revision match, candidate/application state and artifact paths for the latest or exact durable route run.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -661,17 +3595,24 @@
       "name": "route_cancel",
       "toolset": "route",
       "title": "Cancel routing",
-      "description": "Cancel the running route job on the design server. The job stops between steps; nothing is applied to the board.",
+      "description": "Idempotently request cancellation of one exact durable route run. It never cancels a different project or newer run.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": {
+          "runId": {
+            "type": "string",
+            "minLength": 1
+          },
           "project": {
             "description": "Project id, name or absolute path. Optional when the session already has a current project.",
             "type": "string",
             "minLength": 1
           }
         },
+        "required": [
+          "runId"
+        ],
         "additionalProperties": false
       },
       "annotations": {
@@ -680,10 +3621,46 @@
       "longRunning": false
     },
     {
+      "name": "route_apply",
+      "toolset": "route",
+      "title": "Apply route candidate",
+      "description": "Atomically apply one validated route candidate only when the supplied expected PCB revision equals both the current board and the run's starting revision. Restores the prior board on validation failure.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedPcbRevision": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "runId",
+          "expectedPcbRevision"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": false
+    },
+    {
       "name": "route_unroute",
       "toolset": "route",
       "title": "Remove routed tracks",
-      "description": "Delete routed tracks, arcs and vias from the board — all of them or only the named nets — so they can be rerouted with route_run {onlyConnections}. One undo entry in KiCad.",
+      "description": "Delete routed tracks, arcs and vias from the board — all of them or only the named nets. One undo entry in KiCad.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -713,7 +3690,7 @@
       "name": "route_scope",
       "toolset": "route",
       "title": "Nets attached to components",
-      "description": "List the nets attached to component references (e.g. the footprints a repair touches) so they can be unrouted and re-routed with route_run {onlyConnections}. Nets that own a copper pour are excluded by default and listed with the reason.",
+      "description": "List the nets attached to component references (e.g. the footprints a repair touches). Nets that own a copper pour are excluded by default and listed with the reason.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -781,7 +3758,7 @@
       "name": "verify_erc",
       "toolset": "verify",
       "title": "Run KiCad ERC",
-      "description": "Run KiCad electrical rule check on board.kicad_sch, write reports/erc.json and return counts plus the first violations. For generated schematics, give every component a valid libSource and review build warnings first.",
+      "description": "Run packaged kicad-cli electrical rule check on the complete saved schematic hierarchy, bind it to the aggregate revision of every referenced native sheet, write qualified evidence to reports/erc.json, and return counts and violations.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -817,7 +3794,7 @@
       "name": "verify_gate",
       "toolset": "verify",
       "title": "Release gate",
-      "description": "Evaluate the release gate over the latest reports/drc.json and reports/erc.json: pass when DRC errors == 0, unconnected == 0, ERC errors == 0 and every DRC warning signature is in fabdesk.json allowedDrcWarnings. Returns the reasons for failure and new warning signatures; pass acceptWarnings=true to baseline the current warnings (only after a human reviewed them).",
+      "description": "Evaluate the release gate over saved-file reports/drc.json and packaged-kicad-cli reports/erc.json evidence. The result includes pass status, failure reasons, and warning signatures. acceptWarnings adds current warning signatures to fabdesk.json allowedDrcWarnings.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -869,10 +3846,223 @@
       "longRunning": false
     },
     {
+      "name": "release_build",
+      "toolset": "verify",
+      "title": "Verify and build the complete release",
+      "description": "Run full-severity complete-hierarchy ERC, parity-enabled DRC, unconnected/library checks, design-rule floor, root-sheet presentation, PCB-reference visibility, task-derived circuit checks, renders, and native/document/fabrication export for one aggregate saved revision. Missing hierarchy members or outputs fail the release; any referenced-sheet edit makes the evidence stale.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "circuitChecks": {
+            "description": "Task-derived electrical assertions relevant to this board",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "led-current"
+                    },
+                    "name": {
+                      "default": "LED current",
+                      "type": "string"
+                    },
+                    "supplyVolts": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "forwardVolts": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "resistanceOhms": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "minMa": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "maxMa": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "supplyVolts",
+                    "forwardVolts",
+                    "resistanceOhms",
+                    "minMa",
+                    "maxMa"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "usb-c-cc"
+                    },
+                    "name": {
+                      "default": "USB-C CC pull-downs",
+                      "type": "string"
+                    },
+                    "cc1Ohms": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "cc2Ohms": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "expectedOhms": {
+                      "default": 5100,
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "tolerancePercent": {
+                      "default": 10,
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "cc1Ohms",
+                    "cc2Ohms"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "555-astable"
+                    },
+                    "name": {
+                      "default": "555 astable frequency",
+                      "type": "string"
+                    },
+                    "r1Ohms": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "r2Ohms": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "capacitanceFarads": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "expectedHz": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "tolerancePercent": {
+                      "default": 10,
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "r1Ohms",
+                    "r2Ohms",
+                    "capacitanceFarads",
+                    "expectedHz"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "assertion"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "pass": {
+                      "type": "boolean"
+                    },
+                    "evidence": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "pass",
+                    "evidence"
+                  ]
+                }
+              ]
+            }
+          },
+          "buildNotes": {
+            "description": "Assembly notes, design calculations, polarity/orientation guidance and constraints",
+            "type": "string",
+            "minLength": 1
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "circuitChecks",
+          "buildNotes"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
       "name": "render_schematic_svg",
       "toolset": "render",
-      "title": "Render schematic SVG",
-      "description": "Render board.kicad_sch to renders/schematic.svg with kicad-cli and return it. circuit_build draws components that supply libSource and labelled wire stubs for their connected pins.",
+      "title": "Render schematic",
+      "description": "Export board.kicad_sch as SVG and return PNG image pixels bound to the source file revision.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "maxWidth": {
+            "default": 1600,
+            "type": "integer",
+            "minimum": 320,
+            "maximum": 4096
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "longRunning": true
+    },
+    {
+      "name": "render_pcb_svg",
+      "toolset": "render",
+      "title": "Render PCB SVG",
+      "description": "Render board.kicad_pcb copper, silkscreen, and edge cuts to renders/pcb.svg.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -892,14 +4082,78 @@
       "longRunning": true
     },
     {
-      "name": "render_pcb_svg",
+      "name": "render_view",
       "toolset": "render",
-      "title": "Render PCB SVG",
-      "description": "Render board.kicad_pcb (copper, silkscreen, edge cuts) to renders/pcb.svg with kicad-cli and return it. Requires circuit_build.",
+      "title": "Render a focused design view",
+      "description": "Render the saved schematic or an auto-fitted/cropped PCB view. PCB views can highlight component references and nets and return inline PNG pixels bound to the source revision.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": {
+          "document": {
+            "default": "pcb",
+            "type": "string",
+            "enum": [
+              "schematic",
+              "pcb"
+            ]
+          },
+          "region": {
+            "description": "PCB crop rectangle in millimetres; omitted auto-fits the board",
+            "type": "object",
+            "properties": {
+              "minX": {
+                "type": "number"
+              },
+              "minY": {
+                "type": "number"
+              },
+              "maxX": {
+                "type": "number"
+              },
+              "maxY": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "minX",
+              "minY",
+              "maxX",
+              "maxY"
+            ]
+          },
+          "layers": {
+            "description": "KiCad layers; defaults to copper, silkscreen, and Edge.Cuts",
+            "minItems": 1,
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "highlightReferences": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "highlightNets": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "maxWidth": {
+            "default": 1600,
+            "type": "integer",
+            "minimum": 320,
+            "maximum": 4096
+          },
           "project": {
             "description": "Project id, name or absolute path. Optional when the session already has a current project.",
             "type": "string",
@@ -1007,7 +4261,7 @@
       "name": "export_bom",
       "toolset": "export",
       "title": "Export BOM",
-      "description": "Export the bill of materials CSV (reference, value, footprint, quantity and any extra fields) from circuit.netlist.json to exports/bom.csv.",
+      "description": "Export a grouped bill of materials CSV from the saved native schematic to exports/bom.csv.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1029,7 +4283,7 @@
       "name": "export_netlist",
       "toolset": "export",
       "title": "Export netlist",
-      "description": "Export the netlist to exports/netlist.<net|cir>: kicadsexpr is the KiCad netlist the last circuit_build handed to KiCad; spice is generated from circuit.netlist.json.",
+      "description": "Export a KiCad or SPICE netlist from the saved native schematic to exports/netlist.<net|cir>.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1059,7 +4313,7 @@
       "name": "export_zip",
       "toolset": "export",
       "title": "Zip fabrication outputs",
-      "description": "Bundle exports/gerbers, positions.csv and bom.csv into exports/fabrication.zip for upload to a fab house. Run export_gerbers, export_drill, export_pos and export_bom first (missing ones are skipped and reported).",
+      "description": "Bundle the files currently present in exports/gerbers plus positions.csv and bom.csv into exports/fabrication.zip. Missing optional entries are reported.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1081,7 +4335,7 @@
       "name": "export_dxf",
       "toolset": "export",
       "title": "Export DXF artwork",
-      "description": "Export one DXF per layer (mm) to exports/dxf/: the copper-removal artwork for prefab blanks such as Viagrid, where a laser (LightBurn) or CNC isolates the traces instead of a fab. Default layers F.Cu, B.Cu and Edge.Cuts. The bottom layer is drawn as seen from the top: mirror it in the laser software before burning. Requires kicad-cli and board.kicad_pcb.",
+      "description": "Export one millimetre-unit DXF per selected layer to exports/dxf/. Defaults to F.Cu, B.Cu, and Edge.Cuts. Bottom-layer output uses a top-view orientation.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1117,7 +4371,7 @@
       "name": "sim_spice_netlist",
       "toolset": "sim",
       "title": "Generate SPICE netlist",
-      "description": "Generate a SPICE netlist from circuit.netlist.json (R/C/L by value, V/I sources, diodes with a default model), save it to exports/circuit.cir and return it. ICs without models are omitted with a note.",
+      "description": "Export a SPICE netlist from the saved native schematic to exports/circuit.cir and return it.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1140,7 +4394,7 @@
       "name": "sim_run",
       "toolset": "sim",
       "title": "Run SPICE simulation",
-      "description": "Simulate circuit.netlist.json: analysis op (DC operating point), tran (transient; needs stopS, optional stepS) or ac (needs startHz/stopHz). Engine spicey (bundled, default) or ngspice (needs ngspice installed or KiCad's bundled copy). Writes reports/spice.json and returns a table of node voltages / branch currents (first rows for tran/ac).",
+      "description": "Export the saved native schematic to SPICE and simulate it: op, tran, or ac. Engine spicey is bundled; ngspice requires an available binary. Writes reports/spice.json and returns node voltages or branch currents.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1213,7 +4467,7 @@
       "name": "app_state",
       "toolset": "app",
       "title": "Desktop app state",
-      "description": "Inspect the running fabPlane desktop app: version, windows (id, bounds, focus, url) and a snapshot of the renderer UI (active project and thread, board tab, open panels, Route Cinema run/cursor/view mode/perf, auth and core status). Call it first to learn what the app is showing before screenshotting or clicking. Fails with `unavailable` when no app bridge is running.",
+      "description": "Return the running fabPlane desktop app version, windows, and renderer UI state. Fails with `unavailable` when no app bridge is running.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1230,7 +4484,7 @@
       "name": "app_screenshot",
       "toolset": "app",
       "title": "Screenshot the app window",
-      "description": "Capture the fabPlane desktop window (or a region of it, CSS pixels) and return the image so you can see what the user sees. Defaults: scale 0.5, JPEG for full-window captures, PNG for regions. Use app_find to locate elements and app_click/app_type/app_key to interact, then screenshot again to verify.",
+      "description": "Capture the fabPlane desktop window or a CSS-pixel region and return image content. Defaults are scale 0.5 and JPEG for full windows, PNG for regions.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1335,7 +4589,7 @@
       "name": "app_click",
       "toolset": "app",
       "title": "Click in the app",
-      "description": "Click an element by CSS selector (use a `ref` from app_find) or at window coordinates (CSS px). Selector clicks scroll the element into view and send real mouse events at its centre so React handlers fire; clicking an <option> selects it in its <select>. Follow with app_screenshot or app_state to verify.",
+      "description": "Click an element by CSS selector or at CSS-pixel window coordinates. Selector clicks scroll the element into view and send mouse events at its centre; clicking an <option> selects it in its <select>.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1386,7 +4640,7 @@
       "name": "app_type",
       "toolset": "app",
       "title": "Type text in the app",
-      "description": "Type text with real key events into the focused element, or focus `selector` first (a ref from app_find, e.g. the chat textarea). Newlines are typed as Shift+Enter; send Enter with app_key. For the chat composer prefer app_send_message, which sets the text and sends through the UI.",
+      "description": "Type text with key events into the focused element, or focus `selector` first. Newlines are typed as Shift+Enter.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1421,7 +4675,7 @@
       "name": "app_key",
       "toolset": "app",
       "title": "Press a key",
-      "description": "Send one key press (down/up) to the app using Electron accelerator syntax: `Enter`, `Escape`, `Tab`, `CommandOrControl+K` (command palette), `CommandOrControl+,` (settings), `Shift+Enter`, `ArrowDown`. Use it for shortcuts and to submit or dismiss dialogs.",
+      "description": "Send one key press to the app using Electron accelerator syntax, such as `Enter`, `Escape`, `Tab`, `CommandOrControl+K`, `Shift+Enter`, or `ArrowDown`.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1476,7 +4730,7 @@
       "name": "app_open_tab",
       "toolset": "app",
       "title": "Open a board tab",
-      "description": "Open one of the board panel tabs (schematic, pcb, cinema = Route Cinema, 3d, drc, renders, files) and make sure the board panel is visible.",
+      "description": "Open one of the board panel tabs (schematic, pcb, cinema = Route Cinema, 3d, drc, renders, files, bom = Shopping list) and make sure the board panel is visible.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1490,7 +4744,8 @@
               "3d",
               "drc",
               "renders",
-              "files"
+              "files",
+              "bom"
             ]
           }
         },
@@ -1549,7 +4804,7 @@
       "name": "app_send_message",
       "toolset": "app",
       "title": "Send a chat message through the UI",
-      "description": "Put text in the chat composer and send it exactly as a user would (creating the thread when the UI is on a new chat, starting the selected agent run). Optionally pick the agent first. Returns whether the composer accepted the send and the thread id afterwards; use app_state/app_screenshot to follow the run.",
+      "description": "Put text in the chat composer and send it through the UI. Optionally selects an agent. Returns send status and the resulting thread id.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1579,7 +4834,7 @@
       "name": "app_cinema",
       "toolset": "app",
       "title": "Control Route Cinema",
-      "description": "Drive the Route Cinema tab: view (mode = board to fit the whole board, activity to follow recent copper), seek (index = frame to show; leaves live-follow), live (follow the newest frame again), layer (layer = copper layer index to toggle visibility), load (run = id of a persisted route run to replay, e.g. from route_status). The cinema only has a run after route_run streamed one in this app session or after load. Opens the cinema tab first. Returns the cinema state.",
+      "description": "Control Route Cinema view mode, frame position, live-follow state, visible copper layers, or loaded route run. Returns the cinema state.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1667,7 +4922,7 @@
       "name": "app_eval",
       "toolset": "app",
       "title": "Evaluate JavaScript in the app",
-      "description": "Run arbitrary JavaScript in the renderer main world (dev/automation builds only) and return its JSON-serialisable result. `window.__fabdeskApp` exposes the automation API (state(), find(), selectProject(), ...). Prefer the specific app_* tools; use this for one-off inspection.",
+      "description": "Run JavaScript in the renderer main world in dev or automation builds and return its JSON-serialisable result. `window.__fabdeskApp` exposes the automation API.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1699,6 +4954,505 @@
         "destructiveHint": true,
         "openWorldHint": true,
         "idempotentHint": false
+      },
+      "longRunning": false
+    },
+    {
+      "name": "shopping_list_get",
+      "toolset": "shopping",
+      "title": "Get the project's shopping list",
+      "description": "Show the project's fabplane.com shopping list (BOM cart): every line grouped by purchase destination (JLCPCB, Manual purchase, DigiKey, custom ones like DigiKey Thailand) with item ids, quantities, refs, status (needed/ordered/received) and notes, plus the dashboard link. Returns cart: null when the project has no list yet (shopping_list_add or shopping_list_sync_bom create it). Requires fabplane sign-in.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "shopping_list_add",
+      "toolset": "shopping",
+      "title": "Add items to the shopping list",
+      "description": "Append lines to the project's shopping list, creating the list if the project has none yet (named after the project and tagged with its git remotes). Use for parts not in the netlist, spares, tools, or a specific distributor listing. Each item needs a quantity; set destination to route it to a distributor or \"manual\". Items without refs are kept across BOM re-syncs. Returns the added items and the updated list.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 1,
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "description": "\"part\" (default) for components, \"pcb\" for the bare board order, \"other\" for tools/consumables",
+                  "type": "string",
+                  "enum": [
+                    "pcb",
+                    "part",
+                    "other"
+                  ]
+                },
+                "mpn": {
+                  "description": "Manufacturer part number",
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "value": {
+                  "description": "Component value, e.g. \"10k\", \"100nF\"",
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "footprint": {
+                  "description": "KiCad footprint, e.g. \"Resistor_SMD:R_0603_1608Metric\"",
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "refs": {
+                  "description": "Designators, e.g. [\"R1\",\"R2\"]",
+                  "maxItems": 500,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "destination": {
+                  "description": "Where to buy it: a destination id (\"builtin:digikey\", a custom uuid), built-in key (\"jlcpcb\", \"manual\") or name (\"DigiKey Thailand\"). Default: the cart's fab house (JLCPCB), which assembles/sources everything not moved elsewhere.",
+                  "type": "string"
+                },
+                "sku": {
+                  "description": "Distributor part number or LCSC C-number",
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "url": {
+                  "description": "Product page",
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "unitPrice": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "currency": {
+                  "description": "ISO 4217, e.g. USD, THB",
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 3
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "needed",
+                    "ordered",
+                    "received"
+                  ]
+                },
+                "notes": {
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "quantity"
+              ]
+            }
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "openWorldHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "shopping_list_update",
+      "toolset": "shopping",
+      "title": "Update a shopping list item",
+      "description": "Change one shopping-list line by item id (from shopping_list_get): quantity, destination (move it from JLCPCB to a distributor or \"manual\"), status (needed → ordered → received), notes, sku/url/price or part fields. Only the fields you pass change. BOM re-syncs keep destination, status and notes.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "description": "Item id from shopping_list_get",
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "description": "\"part\" (default) for components, \"pcb\" for the bare board order, \"other\" for tools/consumables",
+            "type": "string",
+            "enum": [
+              "pcb",
+              "part",
+              "other"
+            ]
+          },
+          "mpn": {
+            "description": "Manufacturer part number",
+            "type": "string",
+            "maxLength": 200
+          },
+          "manufacturer": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "value": {
+            "description": "Component value, e.g. \"10k\", \"100nF\"",
+            "type": "string",
+            "maxLength": 200
+          },
+          "footprint": {
+            "description": "KiCad footprint, e.g. \"Resistor_SMD:R_0603_1608Metric\"",
+            "type": "string",
+            "maxLength": 300
+          },
+          "refs": {
+            "description": "Designators, e.g. [\"R1\",\"R2\"]",
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "destination": {
+            "description": "Where to buy it: a destination id (\"builtin:digikey\", a custom uuid), built-in key (\"jlcpcb\", \"manual\") or name (\"DigiKey Thailand\"). Default: the cart's fab house (JLCPCB), which assembles/sources everything not moved elsewhere.",
+            "type": "string"
+          },
+          "sku": {
+            "description": "Distributor part number or LCSC C-number",
+            "type": "string",
+            "maxLength": 200
+          },
+          "url": {
+            "description": "Product page",
+            "type": "string",
+            "maxLength": 2000
+          },
+          "unitPrice": {
+            "type": "number",
+            "minimum": 0
+          },
+          "currency": {
+            "description": "ISO 4217, e.g. USD, THB",
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "needed",
+              "ordered",
+              "received"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "itemId"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "shopping_list_remove",
+      "toolset": "shopping",
+      "title": "Remove a shopping list item",
+      "description": "Delete one line from the project's shopping list by item id. A line that came from the BOM returns on the next shopping_list_sync_bom unless the part is removed from the design; set quantity 0 instead to keep it out.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "description": "Item id from shopping_list_get",
+            "type": "string",
+            "minLength": 1
+          },
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "itemId"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "openWorldHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "shopping_list_sync_bom",
+      "toolset": "shopping",
+      "title": "Sync the shopping list from the BOM",
+      "description": "Rebuild the part lines of the project's shopping list from circuit.netlist.json: components grouped by value + footprint + MPN/manufacturer fields, quantity = count, refs listed, LCSC field → sku, excluding #PWR-style symbols and DNP parts. Lines matched to the previous sync (by MPN, else value + footprint) keep their destination, status and notes; hand-added lines are kept; parts no longer in the design are dropped. Adds a \"PCB – <project>\" × 5 line at the fab house if there is none. Creates the list on first use.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "description": "Project id, name or absolute path. Optional when the session already has a current project.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "shopping_list_destinations",
+      "toolset": "shopping",
+      "title": "List or add purchase destinations",
+      "description": "List where shopping-list items can be bought: built-in fab houses (JLCPCB, PCBWay, OSH Park), distributors (DigiKey, Mouser, LCSC, …), \"Manual purchase\", and the org's custom destinations. Pass `add` to create a custom destination (org admins only), e.g. { name: \"DigiKey Thailand\", url: \"https://www.digikey.co.th\", baseId: \"builtin:digikey\" }.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "add": {
+            "description": "Create this custom destination first",
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "url": {
+                "description": "Storefront URL (http/https)",
+                "type": "string",
+                "format": "uri"
+              },
+              "kind": {
+                "description": "Default distributor",
+                "type": "string",
+                "enum": [
+                  "fab",
+                  "distributor",
+                  "manual"
+                ]
+              },
+              "baseId": {
+                "description": "Built-in destination this is a regional variant of, e.g. \"builtin:digikey\"",
+                "type": "string",
+                "pattern": "^builtin:.*"
+              }
+            },
+            "required": [
+              "name",
+              "url"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "openWorldHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "inventory_search",
+      "toolset": "shopping",
+      "title": "Search the team inventory",
+      "description": "Search the active fabplane org's parts inventory (what the team already has on the shelf) by text (name, MPN, manufacturer, description, SKU; case-insensitive) and optionally category, location or tag. Shows whether a part for the shopping list is already in stock. Returns items with id, quantity, unit, location, tags, attributes and image URLs; pass nextCursor back as cursor for more.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "q": {
+            "description": "Free-text query",
+            "type": "string",
+            "maxLength": 200
+          },
+          "category": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "limit": {
+            "description": "Default 50",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "cursor": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true
+      },
+      "longRunning": false
+    },
+    {
+      "name": "inventory_add",
+      "toolset": "shopping",
+      "title": "Add an item to the team inventory",
+      "description": "Record a part the team has on hand in the active fabplane org's inventory. You (the local agent) do the extraction: read labels, photos or datasheets yourself and send the structured fields plus any semi-structured facts as `attributes` (e.g. { package: \"SOT-23\", voltage_v: 3.3, esd_sensitive: true }). The server does no AI processing. Pass externalId to make repeated adds idempotent (same externalId updates the existing item). Images are not uploaded by this tool.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Human name, e.g. \"AMS1117-3.3 LDO\"",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "mpn": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "manufacturer": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "sku": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "category": {
+            "description": "e.g. \"Voltage regulators\"",
+            "type": "string",
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "quantity": {
+            "description": "Count on hand, default 0",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "unit": {
+            "description": "Default \"pcs\"",
+            "type": "string",
+            "maxLength": 40
+          },
+          "location": {
+            "description": "e.g. \"Bangkok lab / drawer A3\"",
+            "type": "string",
+            "maxLength": 200
+          },
+          "tags": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "attributes": {
+            "description": "Semi-structured facts you extracted, ≤ 100 keys",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "externalId": {
+            "description": "Idempotency key",
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "openWorldHint": true
       },
       "longRunning": false
     }
