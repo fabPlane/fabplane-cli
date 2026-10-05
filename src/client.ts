@@ -1,3 +1,6 @@
+import {boardInput, revisionInput,revisionUpdate,orderInput,orderUpdate,importPreviewInput} from './pcb.js';
+import type {BoardInput,RevisionInput,OrderInput,Workflow} from './pcb.js';
+import type {z} from 'zod/v4';
 /**
  * Typed client for the fabplane.com API. Every contract operationId is a method of the same
  * name and returns the JSON body the contract documents (envelope included, e.g. `{ orgs }`).
@@ -728,6 +731,17 @@ export class FabplaneClient {
   openapi(): Promise<Record<string, unknown>> {
     return this.request("GET", "/v1/public/openapi.json", { anonymous: true });
   }
+
+  // PCB workflow calls validate complete request bodies locally and delegate authorization to the API.
+  pcb_list(orgId:string):Promise<Workflow> {return this.request('GET',this.pcbPath(orgId));}
+  pcb_create_board(orgId:string,input:z.input<typeof boardInput>):Promise<{id:string}> {return this.request('POST',this.pcbPath(orgId)+'/boards',{json:boardInput.parse(input)});}
+  pcb_create_revision(orgId:string,boardId:string,input:z.input<typeof revisionInput>):Promise<{id:string}> {return this.request('POST',this.pcbPath(orgId)+`/boards/${this.pcbId(boardId)}/revisions`,{json:revisionInput.parse(input)});}
+  pcb_update_revision(orgId:string,revisionId:string,input:z.input<typeof revisionUpdate>):Promise<{id:string;version:number}> {return this.request('PUT',this.pcbPath(orgId)+`/revisions/${this.pcbId(revisionId)}`,{json:revisionUpdate.parse(input)});}
+  pcb_create_order(orgId:string,revisionId:string,input:z.input<typeof orderInput>):Promise<{id:string}> {return this.request('POST',this.pcbPath(orgId)+`/revisions/${this.pcbId(revisionId)}/orders`,{json:orderInput.parse(input)});}
+  pcb_update_order(orgId:string,orderId:string,input:z.input<typeof orderUpdate>):Promise<{id:string;version:number}> {return this.request('PUT',this.pcbPath(orgId)+`/orders/${this.pcbId(orderId)}`,{json:orderUpdate.parse(input)});}
+  pcb_import_preview(orgId:string,input:z.input<typeof importPreviewInput>):Promise<{dryRun:true;mappings:Array<{identity:string;action:'create'|'existing'|'duplicate'|'conflict'|'review';boardAction:'create'|'existing'|'review';boardId:string|null;revisionId:string|null;candidate:{board:BoardInput;revision:RevisionInput}}>}> {return this.request('POST',this.pcbPath(orgId)+'/import-preview',{json:importPreviewInput.parse(input)});}
+  private pcbId(id:string):string {if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))throw new Error('PCB identifiers must be UUIDs');return id;}
+  private pcbPath(orgId:string):string {return `/v1/private/orgs/${this.pcbId(orgId)}/pcb`;}
 
   /** `POST /v1/private/push`: queue push notifications to the caller's registered devices. */
   sendPush(messages: PushMessage[]): Promise<PushResponse> {

@@ -70,7 +70,7 @@ const GLOBAL_OPTIONS: Record<string, OptSpec> = {
   help: { type: "boolean", short: "h" },
 };
 
-const GROUPS = new Set(["orgs", "tokens", "bot", "bots", "destinations", "carts", "inventory", "inventory photos", "desktop"]);
+const GROUPS = new Set(["orgs", "tokens", "bot", "bots", "destinations", "carts", "inventory", "inventory photos", "desktop", "pcb"]);
 
 const BOT_AGENT_KINDS = ["openclaw", "hermes", "fabdesk", "ci", "other"];
 
@@ -522,6 +522,15 @@ const commands: Record<string, Command> = {
       ctx.print({ destination }, () => `Added destination ${destination.name} (${destination.id}).`);
     },
   },
+
+  /* ---------- PCB workflow: explicit JSON bodies, no bulk apply ---------- */
+  "pcb list":{usage:"fabplane pcb list",summary:"List board/revision/order workflow in selected org",async run(ctx){const result=await (await ctx.client()).pcb_list(await ctx.orgId());ctx.print(result,()=>JSON.stringify(result,null,2));}},
+  "pcb create-board":{usage:"fabplane pcb create-board <body.json|->",summary:"Explicitly create one board from validated JSON",async run(ctx,args){const input=JSON.parse(await ctx.readText(need(args,0,'body.json')));const result=await (await ctx.client()).pcb_create_board(await ctx.orgId(),input);ctx.print(result,()=>JSON.stringify(result));}},
+  "pcb create-revision":{usage:"fabplane pcb create-revision <boardId> <body.json|->",summary:"Explicitly create one parallel revision",async run(ctx,args){const input=JSON.parse(await ctx.readText(need(args,1,'body.json')));const result=await (await ctx.client()).pcb_create_revision(await ctx.orgId(),need(args,0,'boardId'),input);ctx.print(result,()=>JSON.stringify(result));}},
+  "pcb update-revision":{usage:"fabplane pcb update-revision <revisionId> <body.json|->",summary:"Replace one complete revision with expectedVersion",async run(ctx,args){const input=JSON.parse(await ctx.readText(need(args,1,'body.json')));const result=await (await ctx.client()).pcb_update_revision(await ctx.orgId(),need(args,0,'revisionId'),input);ctx.print(result,()=>JSON.stringify(result));}},
+  "pcb create-order":{usage:"fabplane pcb create-order <revisionId> <body.json|->",summary:"Explicitly create one separate manufacturing order",async run(ctx,args){const input=JSON.parse(await ctx.readText(need(args,1,'body.json')));const result=await (await ctx.client()).pcb_create_order(await ctx.orgId(),need(args,0,'revisionId'),input);ctx.print(result,()=>JSON.stringify(result));}},
+  "pcb update-order":{usage:"fabplane pcb update-order <orderId> <body.json|->",summary:"Replace one complete order with expectedVersion",async run(ctx,args){const input=JSON.parse(await ctx.readText(need(args,1,'body.json')));const result=await (await ctx.client()).pcb_update_order(await ctx.orgId(),need(args,0,'orderId'),input);ctx.print(result,()=>JSON.stringify(result));}},
+  "pcb import-preview":{usage:"fabplane pcb import-preview <body.json|->",summary:"Deduplicate and review PCB candidates; never writes",async run(ctx,args){const input=JSON.parse(await ctx.readText(need(args,0,'body.json')));const result=await (await ctx.client()).pcb_import_preview(await ctx.orgId(),input);ctx.print(result,()=>JSON.stringify(result,null,2));}},
 
   /* ---------- carts ---------- */
   "carts list": {

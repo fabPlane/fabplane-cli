@@ -1,0 +1,19 @@
+{
+  "skills": {
+    "load": {
+      "extraDirs": [
+        "/absolute/path/to/reviewed/fabplane-cli/openclaw"
+      ]
+    },
+    "entries": {
+      "fabplane-pcb": {
+        "enabled": false,
+        "env": {
+          "FABPLANE_API_ORIGIN": "https://api.fabplane.com",
+          "FABPLANE_ORG": "<authorized-disposable-organization-uuid>",
+          "FABPLANE_CREDENTIALS_FILE": "/absolute/private/test-directory/credentials.json"
+        }
+      }
+    }
+  }
+}

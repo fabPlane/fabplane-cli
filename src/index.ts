@@ -51,3 +51,12 @@ export { cartItemsFromCsv, cartItemsFromJson, parseCsv, parseJsonl } from "./csv
 export { operations, type OperationInfo } from "./generated/operations.js";
 export { VERSION } from "./version.js";
 export type * from "./types.js";
+
+export {boardInput as pcbBoardInputSchema,revisionInput as pcbRevisionInputSchema,revisionUpdate as pcbRevisionUpdateSchema,orderInput as pcbOrderInputSchema,orderUpdate as pcbOrderUpdateSchema,importPreviewInput as pcbImportPreviewSchema} from './pcb.js';
+export type {Workflow as PcbWorkflow,Board as PcbBoard,Revision as PcbRevision,Order as PcbOrder} from './pcb.js';
+
+export type PcbBoardInput = import('zod/v4').input<typeof import('./pcb.js').boardInput>;
+export type PcbRevisionInput = import('zod/v4').input<typeof import('./pcb.js').revisionInput>;
+export type PcbOrderInput = import('zod/v4').input<typeof import('./pcb.js').orderInput>;
+export type PcbRevisionUpdate = import('zod/v4').input<typeof import('./pcb.js').revisionUpdate>;
+export type PcbOrderUpdate = import('zod/v4').input<typeof import('./pcb.js').orderUpdate>;

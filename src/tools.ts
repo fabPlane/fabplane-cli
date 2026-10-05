@@ -1,3 +1,4 @@
+import {boardInput,revisionInput,revisionUpdate,orderInput,orderUpdate,importPreviewInput} from './pcb.js';
 /**
  * MCP-ready tool definitions over `FabplaneClient` (and `FabdeskClient` for the desktop tools).
  * Handlers never throw for API failures: they answer `{ isError: true, text }` so an agent can
@@ -423,6 +424,19 @@ export const fabplaneTools: FabplaneTool[] = [
       }),
   }),
 ];
+
+// New PCB tools deliberately affect one record. Bodies share the API contract snapshot.
+const pcbOrgId=z.uuid().optional().describe('Organization UUID; omitted uses the existing selected org.');
+const pcbDefinitions=[
+ {name:'pcb_list',title:'List PCB workflow',description:'Read board identities, parallel revisions and separate manufacturing orders.',schema:{orgId:pcbOrgId},readOnly:true,run:(client:FabplaneClient,args:any,org:string)=>client.pcb_list(org)},
+ {name:'pcb_create_board',title:'Create PCB board',description:'Explicitly create one board identity; no bulk mutation.',schema:{orgId:pcbOrgId,board:boardInput},run:(client:FabplaneClient,args:any,org:string)=>client.pcb_create_board(org,args.board)},
+ {name:'pcb_create_revision',title:'Create PCB revision',description:'Explicitly create one revision of an existing board; stage is independent of blockers.',schema:{orgId:pcbOrgId,boardId:z.uuid(),revision:revisionInput},run:(client:FabplaneClient,args:any,org:string)=>client.pcb_create_revision(org,args.boardId,args.revision)},
+ {name:'pcb_update_revision',title:'Update PCB revision',description:'Explicitly replace one complete revision. Requires expectedVersion; read first. Never omit blockers or evidence.',schema:{orgId:pcbOrgId,revisionId:z.uuid(),revision:revisionUpdate},replace:true,run:(client:FabplaneClient,args:any,org:string)=>client.pcb_update_revision(org,args.revisionId,args.revision)},
+ {name:'pcb_create_order',title:'Create PCB order',description:'Explicitly create one manufacturing order for one revision. Delivery does not prove receipt or function.',schema:{orgId:pcbOrgId,revisionId:z.uuid(),order:orderInput},run:(client:FabplaneClient,args:any,org:string)=>client.pcb_create_order(org,args.revisionId,args.order)},
+ {name:'pcb_update_order',title:'Update PCB order',description:'Explicitly replace one complete order; expectedVersion and unchanged stable key required.',schema:{orgId:pcbOrgId,orderId:z.uuid(),order:orderUpdate},replace:true,run:(client:FabplaneClient,args:any,org:string)=>client.pcb_update_order(org,args.orderId,args.order)},
+ {name:'pcb_import_preview',title:'Preview PCB import',description:'Read-only deduplicating dry run of reviewed local evidence. Does not apply an import or infer status.',schema:{orgId:pcbOrgId,preview:importPreviewInput},readOnly:true,run:(client:FabplaneClient,args:any,org:string)=>client.pcb_import_preview(org,args.preview)},
+];
+for(const tool of pcbDefinitions) fabplaneTools.push(defineTool({name:tool.name,title:tool.title,description:tool.description,inputSchema:tool.schema,annotations:{readOnlyHint:'readOnly' in tool&&tool.readOnly,destructiveHint:'replace' in tool&&tool.replace,idempotentHint:'readOnly' in tool&&tool.readOnly,openWorldHint:false},handler:(client,args,ctx)=>guarded(async()=>{const validated=z.object(tool.schema).strict().parse(args);return {json:await tool.run(client,validated,orgOf(validated,ctx))};})}));
 
 export const FABPLANE_TOOL_NAMES = fabplaneTools.map((t) => t.name);
 
