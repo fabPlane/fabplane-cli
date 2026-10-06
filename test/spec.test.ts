@@ -49,7 +49,7 @@ describe("spec coverage", () => {
   it("the contract's MCP tool names are all present", () => {
     assert.deepEqual(
       fabplaneTools.map((t) => t.name),
-      ["org_list", "destination_list", "cart_list", "cart_get", "cart_create", "cart_add_items", "cart_update_item", "cart_remove_item", "inventory_search", "inventory_add", "inventory_adjust", "inventory_photo_queue", "inventory_photo_claim", "inventory_photo_attach", "inventory_photo_release"],
+      ["org_list", "destination_list", "cart_list", "cart_get", "cart_create", "cart_add_items", "cart_update_item", "cart_remove_item", "inventory_search", "inventory_add", "inventory_adjust", "inventory_photo_queue", "inventory_photo_claim", "inventory_photo_attach", "inventory_photo_release", "pcb_list", "pcb_create_board", "pcb_create_revision", "pcb_update_revision", "pcb_create_order", "pcb_update_order", "pcb_import_preview"],
     );
     for (const t of fabplaneTools) assert.match(t.name, /^[a-z][a-z0-9_]*$/);
   });

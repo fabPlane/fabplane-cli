@@ -449,3 +449,14 @@ nothing. Until the first release, install from source as described under Install
 ## License
 
 MIT
+
+## Team PCB workflow (unreleased 0.3.1 candidate)
+
+Typed SDK methods, `fabplane pcb list` commands and seven `pcb_*` MCP tools now
+cover organization-scoped board identities, parallel revisions, manufacturing
+orders and dry-run import preview. Complete replacement updates require a current
+version and explicit fields. No PCB bulk apply/delete tool is provided.
+
+See [OpenClaw / PCB usage](docs/openclaw-pcb.md), [local validation](docs/VALIDATION.md)
+and [release notes](CHANGELOG.md). These routes are a local backend candidate,
+not a claim of production availability. OpenClaw templates are not installed.

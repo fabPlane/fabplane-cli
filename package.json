@@ -1,6 +1,6 @@
 {
   "name": "fabplane-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Typed API client, CLI (`fabplane`) and stdio MCP server for fabplane.com, plus a client for the local fabdesk desktop daemon.",
   "license": "MIT",
   "type": "module",
@@ -43,7 +43,11 @@
     "dist",
     "README.md",
     "spec",
-    "integrations"
+    "integrations",
+    "openclaw",
+    "docs/openclaw-pcb.md",
+    "CHANGELOG.md",
+    "docs/VALIDATION.md"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json && chmod +x dist/cli.js",
@@ -55,12 +59,12 @@
     "prepublishOnly": "npm test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0"
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "zod": "4.1.5"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
-    "typescript": "~5.9.2",
-    "zod": "3.25.76"
+    "typescript": "~5.9.2"
   },
   "peerDependencies": {
     "zod": "^3.25.0 || ^4.0.0"

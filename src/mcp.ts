@@ -30,7 +30,7 @@ export function toCallToolResult(result: ToolResult): CallToolResult {
 }
 
 export const MCP_INSTRUCTIONS =
-  "Tools for fabplane.com: orgs, carts (shopping lists / BOMs with per-item purchase destinations) and the parts inventory. " +
+  "Tools for fabplane.com: orgs, carts, parts inventory and organization-scoped PCB workflows. PCB updates replace one complete record with expectedVersion; import is preview-only. Never infer current status, physical receipt or function from prototype data or shipping events. " +
   "Tools default to the user's default org; call org_list to see others. Inventory data should be extracted locally and sent as structured fields.";
 
 export function createFabplaneMcpServer(opts: FabplaneMcpOptions): McpServer {
