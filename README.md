@@ -434,17 +434,31 @@ through the `bun` export condition.
 
 ## Publishing
 
-Releases go to npm from GitHub Actions (`.github/workflows/publish.yml`), which needs an npm token
-that has not been added yet:
+The intended first npm release is **fabplane-cli@0.3.0**, a public MIT package exposing the
+`fabplane` command. The public registry currently returns 404, and there are no release tags.
+Local source builds and fabdesk's Bun workspace do not publish anything to npm.
 
-1. On npmjs.com, create an **automation** (or granular publish) token that can publish the
-   `fabplane-cli` package.
-2. Add it as the `NPM_TOKEN` repository secret: Settings → Secrets and variables → Actions.
-3. Bump `version` in `package.json` and `src/version.ts`, then publish a GitHub release or push a
-   `v*` tag (e.g. `v0.1.1`). The workflow builds, tests and runs `npm publish --provenance`.
+The GitHub Actions workflow uses the existing `NPM_TOKEN` repository secret (its presence alone
+does not establish that it is valid or authorized for this package). Do not create another token
+or change npm access policies as part of a packaging fix.
 
-Without the secret the workflow fails on its first step with an error asking for it, and publishes
-nothing. Until the first release, install from source as described under Install.
+Before authorizing a first public release:
+
+1. Review `npm pack --dry-run --json`, run `npm test` and `npm run test:package`. The package contains
+   compiled JavaScript and declarations in `dist/`, TypeScript source in `src/` for the Bun export,
+   public API/tool snapshots in `spec/`, agent guides in `integrations/`, README, license and package
+   metadata. It contains no source maps or production credentials.
+2. Confirm ownership of the unscoped npm name `fabplane-cli` and publish rights for the existing
+   npm identity/token. This is a **new public release**, not an update to an existing npm version.
+   If interactive publication is chosen, the maintainer must complete `npm login` and any required
+   2FA themselves; do not copy credentials into chat. If the existing Actions token is invalid or
+   npm requires a security change, stop and hand off to the owner.
+3. Keep `package.json`, `package-lock.json`, and `src/version.ts` aligned. After approval, create a
+   matching `v0.3.0` tag/release, or dispatch the publish workflow at the reviewed commit. The
+   workflow tests the installed tarball before `npm publish --provenance --access public`.
+
+Until that release exists, use the source-to-tarball install above. CI checks Node 20 and 22 on
+Linux and Windows; the build uses Node APIs instead of POSIX shell commands.
 
 ## License
 

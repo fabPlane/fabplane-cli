@@ -1,5 +1,4 @@
-# Publishes fabplane-cli to npm. Needs the NPM_TOKEN repository secret, which is added later:
-# see "Publishing" in README.md. Without it this workflow fails on its first step and publishes nothing.
+# Publishes using the existing NPM_TOKEN repository secret; see Publishing in README.md.
 name: Publish to npm
 
 on:
@@ -56,14 +55,16 @@ jobs:
         id: published
         if: steps.token.outputs.present == 'true'
         run: |
-          version="$(node -p "require('./package.json').version")"
-          if npm view "fabplane-cli@$version" version >/dev/null 2>&1; then
-            echo "fabplane-cli@$version is already published; nothing to do."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - run: npm run build && npm test
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const { name, version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`);
+          if (response.status !== 200 && response.status !== 404) {
+            throw new Error(`Registry lookup failed: HTTP ${response.status}; refusing to publish`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `exists=${response.status === 200}\n`);
+          NODE
+      - run: npm run build && npm test && npm run test:package
         if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
       - name: npm publish
         if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
