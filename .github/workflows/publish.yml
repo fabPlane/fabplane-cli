@@ -7,6 +7,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      diagnostics:
+        description: Check existing npm identity without publishing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -40,6 +45,11 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
+      - name: Check existing npm identity
+        if: inputs.diagnostics == true
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami --registry=https://registry.npmjs.org
       - run: npm ci
         if: steps.token.outputs.present == 'true'
       - name: Tag matches package.json
@@ -65,9 +75,9 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `exists=${response.status === 200}\n`);
           NODE
       - run: npm run build && npm test && npm run test:package
-        if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
+        if: inputs.diagnostics != true && steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
       - name: npm publish
-        if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
+        if: inputs.diagnostics != true && steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
