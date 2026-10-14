@@ -32,7 +32,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NPM_TOKEN" ]; then
-            echo "::error title=NPM_TOKEN missing::Please add the NPM_TOKEN repository secret (Settings → Secrets and variables → Actions) to publish fabplane-cli to npm."
+            echo "::error title=NPM_TOKEN missing::Please add the NPM_TOKEN repository secret (Settings → Secrets and variables → Actions) to publish @fabplane/cli to npm."
             echo "present=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi

@@ -11,7 +11,7 @@ function findRoot(): string {
   for (let i = 0; i < 5; i++) {
     try {
       const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name?: string };
-      if (pkg.name === "fabplane-cli") return dir;
+      if (pkg.name === "@fabplane/cli") return dir;
     } catch {
       /* keep walking */
     }

@@ -22,11 +22,11 @@ try {
   assert.ok(files.every(f => !f.endsWith('.map') && !f.startsWith('test/')), 'Unexpected public contents');
   writeFileSync(join(temp, 'package.json'), '{"private":true,"type":"module"}');
   run([npm, 'install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', resolve(temp, pack.filename)]);
-  const installed = join(temp, 'node_modules/fabplane-cli');
+  const installed = join(temp, 'node_modules/@fabplane/cli');
   const version = JSON.parse(readFileSync(join(root, 'package.json'))).version;
   assert.equal(run([join(installed, 'dist/cli.js'), '--version']), version);
   assert.match(run([join(installed, 'dist/cli.js'), 'help']), /fabplane/);
-  assert.equal(run(['--input-type=module', '-e', 'import { VERSION, FabplaneClient, createFabplaneMcpServer } from "fabplane-cli"; if (!FabplaneClient || !createFabplaneMcpServer) process.exit(1); console.log(VERSION)']), version);
+  assert.equal(run(['--input-type=module', '-e', 'import { VERSION, FabplaneClient, createFabplaneMcpServer } from "@fabplane/cli"; if (!FabplaneClient || !createFabplaneMcpServer) process.exit(1); console.log(VERSION)']), version);
   // Every export condition must point at a file actually in the tarball (including Bun).
   const pkg = JSON.parse(readFileSync(join(installed, 'package.json')));
   for (const target of Object.values(pkg.exports['.'])) assert.ok(files.includes(target.replace(/^\.\//, '')), target);

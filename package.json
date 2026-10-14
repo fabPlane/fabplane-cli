@@ -1,5 +1,5 @@
 {
-  "name": "fabplane-cli",
+  "name": "@fabplane/cli",
   "version": "0.3.0",
   "description": "Typed API client, CLI (`fabplane`) and stdio MCP server for fabplane.com, plus a client for the local fabdesk desktop daemon.",
   "license": "MIT",

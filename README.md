@@ -1,4 +1,4 @@
-# fabplane-cli
+# @fabplane/cli
 
 Command line, MCP server and typed TypeScript client for [fabplane.com](https://fabplane.com):
 orgs, personal API tokens, carts (shopping lists / BOMs with per-item purchase destinations) and
@@ -6,15 +6,15 @@ the parts inventory. It also talks to the local fabPlane desktop app (the fabdes
 
 - `fabplane`: a CLI with human output by default and `--json` for scripts
 - `fabplane mcp`: a stdio MCP server for Claude Code, Codex, Cursor and other agents
-- `import { FabplaneClient } from "fabplane-cli"`: the same API as a library
+- `import { FabplaneClient } from "@fabplane/cli"`: the same API as a library
 
 Docs: <https://fabplane.com/docs/cli> · API reference: <https://fabplane.com/docs/api> · MIT licensed.
 
 ## Install
 
 ```sh
-npm i -g fabplane-cli     # installs the `fabplane` command
-npx fabplane-cli help     # or run it without installing
+npm i -g @fabplane/cli     # installs the `fabplane` command
+npx @fabplane/cli help     # or run it without installing
 ```
 
 Until the first npm release, build it from source (`npm i -g github:fabPlane/fabplane-cli` does
@@ -209,7 +209,7 @@ done
 The same loop in TypeScript:
 
 ```ts
-import { FabplaneClient, fetchImage, resolveDefaultOrg } from "fabplane-cli";
+import { FabplaneClient, fetchImage, resolveDefaultOrg } from "@fabplane/cli";
 
 const client = new FabplaneClient({ token: process.env.FABPLANE_TOKEN });
 const orgId = await resolveDefaultOrg(client);
@@ -305,9 +305,9 @@ Sign in first (`fabplane login`) or pass `FABPLANE_TOKEN` in the server's enviro
 **Claude Code**
 
 ```sh
-claude mcp add fabplane -- npx -y fabplane-cli mcp
+claude mcp add fabplane -- npx -y @fabplane/cli mcp
 # with a token and the desktop tools:
-claude mcp add fabplane -e FABPLANE_TOKEN=fpk_… -- npx -y fabplane-cli mcp --desktop
+claude mcp add fabplane -e FABPLANE_TOKEN=fpk_… -- npx -y @fabplane/cli mcp --desktop
 ```
 
 **Codex** (`~/.codex/config.toml`)
@@ -315,7 +315,7 @@ claude mcp add fabplane -e FABPLANE_TOKEN=fpk_… -- npx -y fabplane-cli mcp --d
 ```toml
 [mcp_servers.fabplane]
 command = "npx"
-args = ["-y", "fabplane-cli", "mcp"]
+args = ["-y", "@fabplane/cli", "mcp"]
 # env = { FABPLANE_TOKEN = "fpk_…", FABPLANE_ORG = "my-team" }
 ```
 
@@ -324,7 +324,7 @@ args = ["-y", "fabplane-cli", "mcp"]
 ```json
 {
   "mcpServers": {
-    "fabplane": { "command": "npx", "args": ["-y", "fabplane-cli", "mcp"] }
+    "fabplane": { "command": "npx", "args": ["-y", "@fabplane/cli", "mcp"] }
   }
 }
 ```
@@ -334,7 +334,7 @@ With a global install, use `"command": "fabplane", "args": ["mcp"]` instead of `
 ## Library
 
 ```ts
-import { FabplaneClient, FabplaneApiError, resolveAuth, resolveDefaultOrg, dashboardUrlFor } from "fabplane-cli";
+import { FabplaneClient, FabplaneApiError, resolveAuth, resolveDefaultOrg, dashboardUrlFor } from "@fabplane/cli";
 
 const client = new FabplaneClient({ token: process.env.FABPLANE_TOKEN }); // origin defaults to https://api.fabplane.com
 const orgId = await resolveDefaultOrg(client); // FABPLANE_ORG, else your personal org
@@ -376,7 +376,7 @@ console.log(dashboardUrlFor(client.origin)); // https://app.fabplane.com/dashboa
 ### The desktop app
 
 ```ts
-import { FabdeskClient } from "fabplane-cli";
+import { FabdeskClient } from "@fabplane/cli";
 
 const desk = new FabdeskClient(); // finds daemon.json; or { baseUrl, token }, or FABDESK_URL + FABDESK_TOKEN
 console.log(await desk.health(), await desk.projects());
@@ -434,7 +434,7 @@ through the `bun` export condition.
 
 ## Publishing
 
-The intended first npm release is **fabplane-cli@0.3.0**, a public MIT package exposing the
+The intended first npm release is **@fabplane/cli@0.3.0**, a public MIT package exposing the
 `fabplane` command. The public registry currently returns 404, and there are no release tags.
 Local source builds and fabdesk's Bun workspace do not publish anything to npm.
 
@@ -448,7 +448,7 @@ Before authorizing a first public release:
    compiled JavaScript and declarations in `dist/`, TypeScript source in `src/` for the Bun export,
    public API/tool snapshots in `spec/`, agent guides in `integrations/`, README, license and package
    metadata. It contains no source maps or production credentials.
-2. Confirm ownership of the unscoped npm name `fabplane-cli` and publish rights for the existing
+2. Confirm publish membership in the npm organization `fabplane` for `@fabplane/cli` and publish rights for the existing
    npm identity/token. This is a **new public release**, not an update to an existing npm version.
    If interactive publication is chosen, the maintainer must complete `npm login` and any required
    2FA themselves; do not copy credentials into chat. If the existing Actions token is invalid or
