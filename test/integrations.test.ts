@@ -23,6 +23,7 @@ const skills: Skill[] = readdirSync(integrations, { withFileTypes: true })
 
 /** Top-level `key: value` pairs of the YAML frontmatter (nested blocks are kept as raw text). */
 function frontmatter(text: string): Record<string, string> {
+  text = text.replace(/\r\n/g, "\n");
   const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
   assert.ok(m, "SKILL.md starts with a --- frontmatter block");
   const out: Record<string, string> = {};
@@ -35,6 +36,7 @@ function frontmatter(text: string): Record<string, string> {
 
 /** Every `fabplane …` invocation in fenced code blocks and inline code spans. */
 function fabplaneCommands(text: string): string[] {
+  text = text.replace(/\r\n/g, "\n");
   const out: string[] = [];
   for (const block of text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)) {
     const joined = block[1]!.replace(/\\\n\s*/g, " ");

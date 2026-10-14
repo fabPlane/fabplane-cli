@@ -51,7 +51,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "pretest": "node scripts/build.mjs --test",
-    "test": "node --test --test-reporter=spec build-test/test/*.test.js",
+    "test": "node scripts/test.mjs",
     "sync-spec": "node --experimental-strip-types scripts/sync-spec.ts",
     "prepublishOnly": "npm test",
     "test:package": "node scripts/test-package.mjs"
