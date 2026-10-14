@@ -75,9 +75,9 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `exists=${response.status === 200}\n`);
           NODE
       - run: npm run build && npm test && npm run test:package
-        if: inputs.diagnostics != true && steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
+        if: steps.token.outputs.present == 'true' && inputs.diagnostics != true && steps.published.outputs.exists == 'false'
       - name: npm publish
-        if: inputs.diagnostics != true && steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
+        if: steps.token.outputs.present == 'true' && inputs.diagnostics != true && steps.published.outputs.exists == 'false'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
