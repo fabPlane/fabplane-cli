@@ -18,7 +18,7 @@ const skills: Skill[] = readdirSync(integrations, { withFileTypes: true })
   .flatMap((platform) =>
     readdirSync(join(integrations, platform.name), { withFileTypes: true })
       .filter((d) => d.isDirectory() && existsSync(join(integrations, platform.name, d.name, "SKILL.md")))
-      .map((d) => ({ platform: platform.name, name: d.name, dir: join(integrations, platform.name, d.name), text: readFileSync(join(integrations, platform.name, d.name, "SKILL.md"), "utf8") })),
+      .map((d) => ({ platform: platform.name, name: d.name, dir: join(integrations, platform.name, d.name), text: readFileSync(join(integrations, platform.name, d.name, "SKILL.md"), "utf8").replace(/\r\n/g, "\n") })),
   );
 
 /** Top-level `key: value` pairs of the YAML frontmatter (nested blocks are kept as raw text). */
