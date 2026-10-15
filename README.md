@@ -331,6 +331,101 @@ args = ["-y", "fabplane-cli", "mcp"]
 
 With a global install, use `"command": "fabplane", "args": ["mcp"]` instead of `npx`.
 
+## Cursor and Grok Bot plugin
+
+This repository is a [Cursor / Grok Bot marketplace](https://x.ai/bot/marketplace/submit-a-plugin) plugin
+(Agent Plugins `plugin.json` at the repo root, plus `.cursor-plugin/plugin.json`). Installing it
+starts the published CLI as an MCP server:
+
+```text
+npx -y fabplane-cli mcp --desktop
+```
+
+`--desktop` also exposes `desktop_status`, `desktop_projects` and `desktop_call_tool` when the
+fabPlane desktop app is running on the same machine. Cloud tools (orgs, carts, inventory) work
+without it.
+
+Square logotype for the submission form: [`assets/icon.svg`](assets/icon.svg)
+(1:1, dark plate, mark `#8dbc6c`). After this file is on `main`:
+
+`https://raw.githubusercontent.com/fabPlane/fabplane-cli/main/assets/icon.svg`
+
+### Install in Cursor
+
+Once the plugin is listed, install **fabPlane** from the Cursor Marketplace and reload if asked.
+
+To try this branch locally, before it is listed:
+
+1. Clone this repo (or open it as a plugin folder).
+2. Cursor Settings → Plugins → add a local plugin, pointing at the repo root (the folder that
+   contains `plugin.json` and `mcp.json`).
+3. Confirm an MCP server named `fabplane` is connected.
+
+Then sign in. The plugin does not embed credentials:
+
+```sh
+fabplane login
+fabplane whoami
+```
+
+Or create a personal API token (`fabplane tokens create review`) and set `FABPLANE_TOKEN` on the
+`fabplane` MCP server in Settings → Tools & MCP. Do not paste tokens into chat.
+
+### Install in Grok Bot
+
+Grok Bot installs the same Cursor Marketplace plugins. After **fabPlane** is listed:
+
+1. Install **fabPlane** from the marketplace.
+2. Connect the `fabplane` MCP server and complete sign-in (`fabplane login`, or `FABPLANE_TOKEN`).
+3. Confirm a single server named `fabplane` is connected.
+
+### Testing instructions (reviewers)
+
+Node.js 20+ is required. The desktop app is optional; without it, skip the "open my boards" step
+or expect `desktop_*` tools to say the app is not running.
+
+1. Install the plugin as above (marketplace or this public repo).
+2. Sign in with `fabplane login` (browser device flow) or `FABPLANE_TOKEN`.
+3. Check the MCP server started and lists its tools (see below).
+4. Ask: **open my boards** — should list desktop projects when the app is running.
+5. Ask: **show the shopping list for this project** — `cart_list` / `cart_get` for the current
+   project or repo. An empty org is a valid result.
+6. Optional: `org_list`, then `inventory_search` with a short query.
+
+Smoke-test the MCP server from a checkout without calling the production API (no login needed to
+*list* tools):
+
+```sh
+npm ci && npm run build
+node --input-type=module -e '
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+const transport = new StdioClientTransport({ command: "node", args: ["dist/cli.js", "mcp", "--desktop"] });
+const client = new Client({ name: "review", version: "0" });
+await client.connect(transport);
+const { tools } = await client.listTools();
+console.log(tools.map((t) => t.name).join("\n"));
+await client.close();
+'
+```
+
+Expected cloud tools: `org_list`, `destination_list`, `cart_list`, `cart_get`, `cart_create`,
+`cart_add_items`, `cart_update_item`, `cart_remove_item`, `inventory_search`, `inventory_add`,
+`inventory_adjust`, `inventory_photo_queue`, `inventory_photo_claim`, `inventory_photo_attach`,
+`inventory_photo_release`. With `--desktop` also: `desktop_status`, `desktop_projects`,
+`desktop_call_tool`.
+
+Until `fabplane-cli` is published to npm, `npx -y fabplane-cli mcp` cannot resolve the package.
+Reviewers can run the built `dist/cli.js` as above, or `npm i -g ./fabplane-cli-*.tgz` after
+`npm pack`. Publishing a version to npm is required for the marketplace `npx` command to work
+for end users.
+
+The plugin files live at this repo root (`plugin.json`, `mcp.json`, `skills/`, `assets/`). The
+private fabdesk tree keeps a copy under `plugins/fabplane/`. If a fabdesk → fabplane-cli sync
+rewrites this repo, keep these root paths (do not `--delete` them) and set `repository` to
+`https://github.com/fabPlane/fabplane-cli` with MCP `npx -y fabplane-cli mcp --desktop` rather
+than a fabdesk-local command.
+
 ## Library
 
 ```ts
