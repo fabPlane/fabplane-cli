@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="fabPlane">
+  <title>fabPlane</title>
+  <rect width="512" height="512" fill="#0d2a2a"/>
+  <g fill="#8dbc6c" transform="translate(116 128)">
+    <rect x="0" y="0" width="56" height="56" rx="14"/>
+    <rect x="0" y="200" width="56" height="56" rx="14"/>
+    <rect x="16" y="48" width="24" height="160" rx="8"/>
+    <rect x="48" y="16" width="72" height="24" rx="8"/>
+    <path fill-rule="evenodd" d="M112 0h168c19.882 0 36 16.118 36 36v68c0 19.882-16.118 36-36 36H112c-19.882 0-36-16.118-36-36V36c0-19.882 16.118-36 36-36zm48 40h72c8.837 0 16 7.163 16 16v28c0 8.837-7.163 16-16 16h-72c-8.837 0-16-7.163-16-16V56c0-8.837 7.163-16 16-16z"/>
+  </g>
+</svg>
