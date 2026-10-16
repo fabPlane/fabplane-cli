@@ -41,9 +41,18 @@
   },
   "files": [
     "dist",
+    "src",
     "README.md",
+    "LICENSE",
     "spec",
-    "integrations"
+    "integrations",
+    "plugin.json",
+    "mcp.json",
+    ".mcp.json",
+    ".cursor-plugin",
+    ".claude-plugin",
+    "skills",
+    "assets"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json && chmod +x dist/cli.js",
@@ -52,7 +61,8 @@
     "pretest": "rm -rf build-test && tsc -p tsconfig.test.json",
     "test": "node --test --test-reporter=spec build-test/test/*.test.js",
     "sync-spec": "node --experimental-strip-types scripts/sync-spec.ts",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test",
+    "test:package": "node scripts/test-package.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0"
@@ -64,5 +74,9 @@
   },
   "peerDependencies": {
     "zod": "^3.25.0 || ^4.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }

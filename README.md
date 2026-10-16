@@ -434,17 +434,23 @@ through the `bun` export condition.
 
 ## Publishing
 
-Releases go to npm from GitHub Actions (`.github/workflows/publish.yml`), which needs an npm token
-that has not been added yet:
+`fabplane-cli` is published to the public npm registry from GitHub Actions
+(`.github/workflows/publish.yml`) when a version tag is pushed. Pull-request CI already runs
+`npm pack` and `npm publish --dry-run`; those jobs never upload.
 
-1. On npmjs.com, create an **automation** (or granular publish) token that can publish the
-   `fabplane-cli` package.
+One-time setup (do this once; do not publish from a packaging PR):
+
+1. On npmjs.com, create an **automation** token that can publish the public `fabplane-cli` package.
 2. Add it as the `NPM_TOKEN` repository secret: Settings → Secrets and variables → Actions.
-3. Bump `version` in `package.json` and `src/version.ts`, then publish a GitHub release or push a
-   `v*` tag (e.g. `v0.1.1`). The workflow builds, tests and runs `npm publish --provenance`.
+3. Keep `version` in `package.json` and `src/version.ts` the same, then push a matching `v*` tag
+   (for example `v0.3.0`). The workflow checks the tag, builds, tests, verifies the tarball, and
+   runs `npm publish --provenance --access public`.
 
-Without the secret the workflow fails on its first step with an error asking for it, and publishes
-nothing. Until the first release, install from source as described under Install.
+Without the secret the workflow fails on its first step and publishes nothing. After the first
+tag, `npm i -g fabplane-cli` and the marketplace plugin's `npx -y fabplane-cli mcp --desktop`
+resolve on the registry. The tarball includes `dist/`, `src/` (Bun export), `spec/`,
+`integrations/`, and — when those files are on the branch — the marketplace plugin paths
+(`plugin.json`, `mcp.json`, `.mcp.json`, `.cursor-plugin/`, `.claude-plugin/`, `skills/`, `assets/`).
 
 ## License
 
