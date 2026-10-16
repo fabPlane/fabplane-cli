@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
@@ -68,6 +68,63 @@ describe("spec coverage", () => {
   });
 });
 
+describe("npm package", () => {
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+    name: string;
+    version: string;
+    license: string;
+    bin: Record<string, string>;
+    files: string[];
+    engines: { node: string };
+    repository: { type: string; url: string };
+    publishConfig?: { access: string; registry: string };
+  };
+
+  it("is ready to publish as fabplane-cli", () => {
+    assert.equal(pkg.name, "fabplane-cli");
+    assert.equal(pkg.license, "MIT");
+    assert.equal(pkg.bin.fabplane, "dist/cli.js");
+    assert.equal(pkg.engines.node, ">=20");
+    assert.equal(pkg.repository.type, "git");
+    assert.equal(pkg.repository.url, "git+https://github.com/fabPlane/fabplane-cli.git");
+    assert.deepEqual(pkg.publishConfig, { access: "public", registry: "https://registry.npmjs.org" });
+    for (const entry of [
+      "dist",
+      "src",
+      "README.md",
+      "LICENSE",
+      "spec",
+      "integrations",
+      "plugin.json",
+      "mcp.json",
+      ".mcp.json",
+      ".cursor-plugin",
+      ".claude-plugin",
+      "skills",
+      "assets",
+    ]) {
+      assert.ok(pkg.files.includes(entry), `files missing ${entry}`);
+    }
+  });
+
+  it("marketplace plugin configs launch this same package name when present", () => {
+    for (const rel of ["mcp.json", ".mcp.json"]) {
+      const path = join(root, rel);
+      if (!existsSync(path)) continue;
+      const mcp = JSON.parse(readFileSync(path, "utf8")) as {
+        mcpServers: { fabplane: { command: string; args: string[] } };
+      };
+      assert.equal(mcp.mcpServers.fabplane.command, "npx");
+      assert.deepEqual(mcp.mcpServers.fabplane.args, ["-y", pkg.name, "mcp", "--desktop"]);
+    }
+    const pluginPath = join(root, "plugin.json");
+    if (!existsSync(pluginPath)) return;
+    const plugin = JSON.parse(readFileSync(pluginPath, "utf8")) as { repository: string; license: string };
+    assert.equal(plugin.repository, "https://github.com/fabPlane/fabplane-cli");
+    assert.equal(plugin.license, pkg.license);
+  });
+});
+
 describe("workflows", () => {
   const wf = (name: string) => readFileSync(join(root, ".github", "workflows", name), "utf8");
 
@@ -81,6 +138,16 @@ describe("workflows", () => {
     assert.match(publish, /if: steps\.token\.outputs\.present == 'true'/);
     assert.match(publish, /npm publish --provenance --access public/);
     assert.match(text, /id-token: write/);
+    assert.match(text, /tags: \["v\*"\]/);
+    assert.doesNotMatch(text, /workflow_dispatch/);
+  });
+
+  it("ci.yml dry-runs pack and publish without uploading", () => {
+    const text = wf("ci.yml");
+    assert.match(text, /npm pack --dry-run/);
+    assert.match(text, /npm publish --dry-run --access public --ignore-scripts/);
+    assert.match(text, /npm run test:package/);
+    assert.doesNotMatch(text, /npm publish --provenance/);
   });
 
   it("sync-api.yml runs weekly and on demand and tolerates a missing endpoint", () => {
