@@ -182,6 +182,30 @@ export class FabplaneClient {
     return (await parseBody(res)) as T;
   }
 
+  /** Owner-scoped sharing settings, keyed by the desktop's stable project ID. */
+  getProjectShare(projectId: string): Promise<unknown> {
+    return this.request("GET", `/v1/private/project-shares/${enc(projectId)}`);
+  }
+
+  /** Publish one complete, sanitized snapshot; failures must preserve the active revision. */
+  publishProjectShare(projectId: string, snapshot: unknown): Promise<unknown> {
+    return this.request("PUT", `/v1/private/project-shares/${enc(projectId)}`, { json: snapshot });
+  }
+
+  disableProjectShare(projectId: string): Promise<unknown> {
+    return this.request("DELETE", `/v1/private/project-shares/${enc(projectId)}`);
+  }
+
+  /** Read-only snapshot access never forwards the owner's bearer token. */
+  getSharedProject(shareId: string): Promise<unknown> {
+    return this.request("GET", `/v1/public/project-shares/${enc(shareId)}`, { anonymous: true });
+  }
+
+  /** Lightweight anonymous access/revision check for an already open shared viewer. */
+  getSharedProjectStatus(shareId: string): Promise<unknown> {
+    return this.request("GET", `/v1/public/project-shares/${enc(shareId)}/status`, {anonymous:true});
+  }
+
   /* ================= Me ================= */
 
   /** `GET /v1/private/me` [getMe] */
