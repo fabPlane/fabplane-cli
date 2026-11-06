@@ -12,9 +12,12 @@ it("keeps owner mutations authenticated and public reads anonymous", async () =>
   await client.publishProjectShare("project/a", {schema: 1});
   await client.disableProjectShare("project/a");
   await client.getSharedProject("share-id");
-  assert.deepEqual(calls.map(c => c.init.method), ["GET", "PUT", "DELETE", "GET"]);
+  await client.getSharedProjectStatus("share-id");
+  assert.deepEqual(calls.map(c => c.init.method), ["GET", "PUT", "DELETE", "GET", "GET"]);
   assert.ok(calls[0]!.url.endsWith("/project-shares/project%2Fa"));
   for (const c of calls.slice(0, 3)) assert.equal((c.init.headers as Record<string,string>)["authorization"], "Bearer owner-secret");
+  assert.ok(calls[4]!.url.endsWith("/project-shares/share-id/status"));
+  assert.equal((calls[4]!.init.headers as Record<string,string>)["authorization"], undefined);
   assert.equal((calls[3]!.init.headers as Record<string,string>)["authorization"], undefined);
 });
 it("does not manufacture a link when sharing is unavailable", async () => {

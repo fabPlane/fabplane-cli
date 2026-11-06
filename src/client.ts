@@ -201,6 +201,11 @@ export class FabplaneClient {
     return this.request("GET", `/v1/public/project-shares/${enc(shareId)}`, { anonymous: true });
   }
 
+  /** Lightweight anonymous access/revision check for an already open shared viewer. */
+  getSharedProjectStatus(shareId: string): Promise<unknown> {
+    return this.request("GET", `/v1/public/project-shares/${enc(shareId)}/status`, {anonymous:true});
+  }
+
   /* ================= Me ================= */
 
   /** `GET /v1/private/me` [getMe] */
