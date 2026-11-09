@@ -30,6 +30,7 @@ export const operations: readonly OperationInfo[] = [
   { operationId: "addCartItems", method: "POST", path: "/v1/private/orgs/{orgId}/carts/{cartId}/items" },
   { operationId: "deleteCartItem", method: "DELETE", path: "/v1/private/orgs/{orgId}/carts/{cartId}/items/{itemId}" },
   { operationId: "updateCartItem", method: "PATCH", path: "/v1/private/orgs/{orgId}/carts/{cartId}/items/{itemId}" },
+  { operationId: "moveCart", method: "POST", path: "/v1/private/orgs/{orgId}/carts/{cartId}/move" },
   { operationId: "listDestinations", method: "GET", path: "/v1/private/orgs/{orgId}/destinations" },
   { operationId: "createDestination", method: "POST", path: "/v1/private/orgs/{orgId}/destinations" },
   { operationId: "deleteDestination", method: "DELETE", path: "/v1/private/orgs/{orgId}/destinations/{destinationId}" },
