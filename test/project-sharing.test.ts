@@ -32,3 +32,13 @@ it("publishes restricted snapshots explicitly and preserves default policy when 
   assert.ok(new URL(urls[0]!).pathname.endsWith("/restricted"));
   assert.equal(new URL(urls[1]!).search, "");
 });
+it("updates snapshots through a fail-closed endpoint without resubmitting stale visibility", async () => {
+  const urls: string[] = [];
+  const client = new FabplaneClient({token: "owner", fetch: async url => { urls.push(url); return Response.json({error: "not_found"}, {status: 404}); }});
+  await assert.rejects(client.publishProjectShare("board/project", {}, undefined, {updateOnly: true}), FabplaneApiError);
+  assert.equal(urls.length, 1); // No legacy publication fallback on an older server.
+  assert.ok(new URL(urls[0]!).pathname.endsWith("/board%2Fproject/snapshot"));
+  assert.equal(new URL(urls[0]!).search, "");
+  assert.throws(() => client.publishProjectShare("p", {}, "unlisted", {updateOnly: true}), TypeError);
+  assert.equal(urls.length, 1);
+});

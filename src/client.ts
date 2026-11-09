@@ -188,9 +188,10 @@ export class FabplaneClient {
   }
 
   /** Publish one complete, sanitized snapshot; failures must preserve the active revision. */
-  publishProjectShare(projectId: string, snapshot: unknown, visibility?: "restricted" | "unlisted"): Promise<unknown> {
+  publishProjectShare(projectId: string, snapshot: unknown, visibility?: "restricted" | "unlisted", options?: {updateOnly?: boolean}): Promise<unknown> {
+    if (options?.updateOnly && visibility !== undefined) throw new TypeError("Snapshot updates cannot change project visibility");
     // A distinct endpoint fails closed on older servers that would ignore a new query parameter.
-    return this.request("PUT", `/v1/private/project-shares/${enc(projectId)}${visibility === "restricted" ? "/restricted" : ""}`, { json: snapshot, ...(visibility === "unlisted" ? { query: { visibility } } : {}) });
+    return this.request("PUT", `/v1/private/project-shares/${enc(projectId)}${options?.updateOnly ? "/snapshot" : visibility === "restricted" ? "/restricted" : ""}`, { json: snapshot, ...(visibility === "unlisted" ? { query: { visibility } } : {}) });
   }
 
   disableProjectShare(projectId: string): Promise<unknown> {
