@@ -24,3 +24,11 @@ it("does not manufacture a link when sharing is unavailable", async () => {
   const client = new FabplaneClient({fetch: async () => Response.json({error: "not_found"}, {status: 404})});
   await assert.rejects(client.publishProjectShare("p", {}), FabplaneApiError);
 });
+it("publishes restricted snapshots explicitly and preserves default policy when no choice is supplied", async () => {
+  const urls: string[] = [];
+  const client = new FabplaneClient({token: "owner", fetch: async url => { urls.push(url); return Response.json({visibility: "restricted"}); }});
+  await client.publishProjectShare("board project", {}, "restricted");
+  await client.publishProjectShare("board project", {});
+  assert.ok(new URL(urls[0]!).pathname.endsWith("/restricted"));
+  assert.equal(new URL(urls[1]!).search, "");
+});
