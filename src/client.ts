@@ -182,6 +182,19 @@ export class FabplaneClient {
     return (await parseBody(res)) as T;
   }
 
+  /** Signed-in project membership; native files never use anonymous requests. */
+  listSharedProjects(): Promise<unknown> {
+    return this.request("GET", "/v1/private/shared-projects");
+  }
+  listContributionBoards(projectId: string): Promise<unknown> {
+    return this.request("GET", `/v1/private/shared-projects/${enc(projectId)}/boards`);
+  }
+  downloadBoardSource(projectId: string, boardId: string): Promise<unknown> {
+    return this.request("GET", `/v1/private/shared-projects/${enc(projectId)}/boards/${enc(boardId)}/source`);
+  }
+  publishBoardRevision(projectId: string, boardId: string, input: unknown): Promise<unknown> {
+    return this.request("PUT", `/v1/private/shared-projects/${enc(projectId)}/boards/${enc(boardId)}/revisions`, {json: input});
+  }
   /** Owner-scoped sharing settings, keyed by the desktop's stable project ID. */
   getProjectShare(projectId: string): Promise<unknown> {
     return this.request("GET", `/v1/private/project-shares/${enc(projectId)}`);

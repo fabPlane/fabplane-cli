@@ -42,3 +42,20 @@ it("updates snapshots through a fail-closed endpoint without resubmitting stale 
   assert.throws(() => client.publishProjectShare("p", {}, "unlisted", {updateOnly: true}), TypeError);
   assert.equal(urls.length, 1);
 });
+
+it("keeps contributor downloads and guarded board writes authenticated without fallback", async () => {
+  const calls: Array<{url:string; init:RequestInit}> = [];
+  const c = new FabplaneClient({token:"member-token",fetch:async(url,init)=>{
+    calls.push({url,init:init??{}}); return Response.json({error:"conflict",message:"Newer revision"},{status:409});
+  }});
+  await assert.rejects(c.listSharedProjects(),FabplaneApiError);
+  await assert.rejects(c.listContributionBoards("p/x"),FabplaneApiError);
+  await assert.rejects(c.downloadBoardSource("p/x","b/y"),FabplaneApiError);
+  const input={expectedRevision:"old",files:{pcb:"(kicad_pcb )"}};
+  await assert.rejects(c.publishBoardRevision("p/x","b/y",input),e=>e instanceof FabplaneApiError && e.status===409);
+  assert.equal(calls.length,4);
+  assert.ok(calls[2]!.url.endsWith("/p%2Fx/boards/b%2Fy/source"));
+  assert.ok(calls[3]!.url.endsWith("/p%2Fx/boards/b%2Fy/revisions"));
+  assert.deepEqual(JSON.parse(calls[3]!.init.body as string),input);
+  for(const call of calls)assert.equal((call.init.headers as Record<string,string>).authorization,"Bearer member-token");
+});
