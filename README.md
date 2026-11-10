@@ -449,3 +449,7 @@ nothing. Until the first release, install from source as described under Install
 ## License
 
 MIT
+
+### Project board contribution
+
+Signed-in project members use `listSharedProjects()` and `listContributionBoards(projectId)`. Owners explicitly share editable KiCad files; accepted Contributors can call `downloadBoardSource(projectId, boardId)` and `publishBoardRevision(projectId, boardId, { expectedRevision, files, board })`. Keep the downloaded revision as the base; do not replace it with a freshly fetched head before publishing. A 409 means another revision won and local edits must be preserved. These calls always use the authenticated private API and have no legacy or anonymous fallback.
