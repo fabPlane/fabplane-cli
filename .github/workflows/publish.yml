@@ -1,13 +1,14 @@
-# Publishes fabplane-cli to npm. Needs the NPM_TOKEN repository secret, which is added later:
-# see "Publishing" in README.md. Without it this workflow fails on its first step and publishes nothing.
+# Publishes fabplane-cli to npm on version tags. One-time setup (not done here):
+# add the NPM_TOKEN repository secret, then push a v* tag that matches package.json.
+# See "Publishing" in README.md. Without the secret this workflow fails on its first
+# step and publishes nothing.
 name: Publish to npm
 
 on:
-  release:
-    types: [published]
   push:
     tags: ["v*"]
-  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -47,7 +48,12 @@ jobs:
         if: steps.token.outputs.present == 'true' && github.ref_type == 'tag'
         run: |
           version="$(node -p "require('./package.json').version")"
+          name="$(node -p "require('./package.json').name")"
           tag="${GITHUB_REF_NAME#v}"
+          if [ "$name" != "fabplane-cli" ]; then
+            echo "::error::package.json name is $name; expected fabplane-cli"
+            exit 1
+          fi
           if [ "$version" != "$tag" ]; then
             echo "::error::Tag v$tag does not match package.json version $version"
             exit 1
@@ -56,14 +62,20 @@ jobs:
         id: published
         if: steps.token.outputs.present == 'true'
         run: |
-          version="$(node -p "require('./package.json').version")"
-          if npm view "fabplane-cli@$version" version >/dev/null 2>&1; then
-            echo "fabplane-cli@$version is already published; nothing to do."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - run: npm run build && npm test
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from "node:fs";
+          const { name, version } = JSON.parse(readFileSync("package.json", "utf8"));
+          const url = `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`;
+          const response = await fetch(url);
+          if (response.status !== 200 && response.status !== 404) {
+            throw new Error(`Registry lookup failed: HTTP ${response.status}; refusing to publish`);
+          }
+          if (response.status === 200) {
+            console.log(`${name}@${version} is already published; nothing to do.`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `exists=${response.status === 200}\n`);
+          NODE
+      - run: npm run build && npm test && npm run test:package
         if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
       - name: npm publish
         if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'

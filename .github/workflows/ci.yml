@@ -31,6 +31,11 @@ jobs:
         run: |
           npm run sync-spec -- --offline
           git diff --exit-code -- spec src/generated
-      - name: Package contents
+      - name: Package dry-run
         if: matrix.node == 22
-        run: npm pack --dry-run
+        run: |
+          npm pack --dry-run
+          npm publish --dry-run --access public --ignore-scripts
+      - name: Packed tarball
+        if: matrix.node == 22
+        run: npm run test:package
