@@ -1,5 +1,4 @@
-# Publishes fabplane-cli to npm. Needs the NPM_TOKEN repository secret, which is added later:
-# see "Publishing" in README.md. Without it this workflow fails on its first step and publishes nothing.
+# Publishes using the existing NPM_TOKEN repository secret; see Publishing in README.md.
 name: Publish to npm
 
 on:
@@ -8,6 +7,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      diagnostics:
+        description: Check existing npm identity without publishing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,7 +32,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NPM_TOKEN" ]; then
-            echo "::error title=NPM_TOKEN missing::Please add the NPM_TOKEN repository secret (Settings → Secrets and variables → Actions) to publish fabplane-cli to npm."
+            echo "::error title=NPM_TOKEN missing::Please add the NPM_TOKEN repository secret (Settings → Secrets and variables → Actions) to publish @fabplane/cli to npm."
             echo "present=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
@@ -41,6 +45,11 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
+      - name: Check existing npm identity
+        if: inputs.diagnostics == true
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami --registry=https://registry.npmjs.org
       - run: npm ci
         if: steps.token.outputs.present == 'true'
       - name: Tag matches package.json
@@ -56,17 +65,19 @@ jobs:
         id: published
         if: steps.token.outputs.present == 'true'
         run: |
-          version="$(node -p "require('./package.json').version")"
-          if npm view "fabplane-cli@$version" version >/dev/null 2>&1; then
-            echo "fabplane-cli@$version is already published; nothing to do."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - run: npm run build && npm test
-        if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const { name, version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`);
+          if (response.status !== 200 && response.status !== 404) {
+            throw new Error(`Registry lookup failed: HTTP ${response.status}; refusing to publish`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `exists=${response.status === 200}\n`);
+          NODE
+      - run: npm run build && npm test && npm run test:package
+        if: steps.token.outputs.present == 'true' && inputs.diagnostics != true && steps.published.outputs.exists == 'false'
       - name: npm publish
-        if: steps.token.outputs.present == 'true' && steps.published.outputs.exists == 'false'
+        if: steps.token.outputs.present == 'true' && inputs.diagnostics != true && steps.published.outputs.exists == 'false'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public

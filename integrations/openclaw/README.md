@@ -32,7 +32,7 @@ your org, never with a person's login.
    ```sh
    mkdir -p ~/.openclaw/workspace/skills
    cp -r integrations/openclaw/fabplane-inventory ~/.openclaw/workspace/skills/
-   # from an npm install: cp -r "$(npm root -g)/fabplane-cli/integrations/openclaw/fabplane-inventory" ~/.openclaw/workspace/skills/
+   # from an npm install: cp -r "$(npm root -g)/@fabplane/cli/integrations/openclaw/fabplane-inventory" ~/.openclaw/workspace/skills/
    ```
 
    The skill is user-invocable (`/fabplane-inventory …`) and is also picked up when inventory comes up.

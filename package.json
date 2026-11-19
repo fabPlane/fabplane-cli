@@ -1,5 +1,5 @@
 {
-  "name": "fabplane-cli",
+  "name": "@fabplane/cli",
   "version": "0.3.0",
   "description": "Typed API client, CLI (`fabplane`) and stdio MCP server for fabplane.com, plus a client for the local fabdesk desktop daemon.",
   "license": "MIT",
@@ -41,18 +41,20 @@
   },
   "files": [
     "dist",
+    "src",
     "README.md",
     "spec",
     "integrations"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "build": "node scripts/build.mjs",
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "pretest": "rm -rf build-test && tsc -p tsconfig.test.json",
-    "test": "node --test --test-reporter=spec build-test/test/*.test.js",
+    "pretest": "node scripts/build.mjs --test",
+    "test": "node scripts/test.mjs",
     "sync-spec": "node --experimental-strip-types scripts/sync-spec.ts",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test",
+    "test:package": "node scripts/test-package.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0"
@@ -64,5 +66,9 @@
   },
   "peerDependencies": {
     "zod": "^3.25.0 || ^4.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }

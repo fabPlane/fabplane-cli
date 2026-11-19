@@ -18,11 +18,12 @@ const skills: Skill[] = readdirSync(integrations, { withFileTypes: true })
   .flatMap((platform) =>
     readdirSync(join(integrations, platform.name), { withFileTypes: true })
       .filter((d) => d.isDirectory() && existsSync(join(integrations, platform.name, d.name, "SKILL.md")))
-      .map((d) => ({ platform: platform.name, name: d.name, dir: join(integrations, platform.name, d.name), text: readFileSync(join(integrations, platform.name, d.name, "SKILL.md"), "utf8") })),
+      .map((d) => ({ platform: platform.name, name: d.name, dir: join(integrations, platform.name, d.name), text: readFileSync(join(integrations, platform.name, d.name, "SKILL.md"), "utf8").replace(/\r\n/g, "\n") })),
   );
 
 /** Top-level `key: value` pairs of the YAML frontmatter (nested blocks are kept as raw text). */
 function frontmatter(text: string): Record<string, string> {
+  text = text.replace(/\r\n/g, "\n");
   const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
   assert.ok(m, "SKILL.md starts with a --- frontmatter block");
   const out: Record<string, string> = {};
@@ -35,6 +36,7 @@ function frontmatter(text: string): Record<string, string> {
 
 /** Every `fabplane …` invocation in fenced code blocks and inline code spans. */
 function fabplaneCommands(text: string): string[] {
+  text = text.replace(/\r\n/g, "\n");
   const out: string[] = [];
   for (const block of text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)) {
     const joined = block[1]!.replace(/\\\n\s*/g, " ");
