@@ -1,0 +1,16 @@
+{
+  "name": "fabplane",
+  "displayName": "fabPlane",
+  "version": "0.1.0",
+  "description": "Design, review and order PCBs with fabPlane: interactive board, CAD and shopping-list views plus the fabdesk PCB tools (build, route, DRC, fab exports).",
+  "author": {
+    "name": "fabPlane"
+  },
+  "homepage": "https://fabplane.com/docs/cli",
+  "repository": "https://github.com/fabPlane/fabplane-cli",
+  "license": "MIT",
+  "keywords": ["fabplane", "pcb", "kicad", "bom", "inventory", "mcp", "electronics"],
+  "logo": "assets/icon.svg",
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json"
+}
