@@ -55,6 +55,8 @@ import type {
   PushMessage,
   PushResponse,
   Role,
+  TelemetryEvent,
+  TelemetryEventsResponse,
   UpdateCartInput,
   UpdateOrgInput,
 } from "./types.js";
@@ -86,6 +88,7 @@ type RequestOptions = {
   /** Do not send the bearer token. */
   anonymous?: boolean;
   redirect?: NonNullable<RequestInit["redirect"]>;
+  signal?: AbortSignal;
 };
 
 const enc = encodeURIComponent;
@@ -172,6 +175,7 @@ export class FabplaneClient {
       headers,
       ...(body !== undefined ? { body } : {}),
       ...(opts.redirect ? { redirect: opts.redirect } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
   }
 
@@ -766,6 +770,18 @@ export class FabplaneClient {
   /** `GET /v1/public/openapi.json`: the API's OpenAPI 3.1 document (no auth). */
   openapi(): Promise<Record<string, unknown>> {
     return this.request("GET", "/v1/public/openapi.json", { anonymous: true });
+  }
+
+  /** `POST /v1/telemetry/events`: anonymous product-analytics ingest (no auth). */
+  postTelemetryEvents(
+    events: TelemetryEvent[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TelemetryEventsResponse> {
+    return this.request("POST", "/v1/telemetry/events", {
+      anonymous: true,
+      json: { events },
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
   }
 
   /** `POST /v1/private/push`: queue push notifications to the caller's registered devices. */

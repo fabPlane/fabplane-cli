@@ -357,8 +357,8 @@ console.log(dashboardUrlFor(client.origin)); // https://app.fabplane.com/dashboa
   to the JSON body the API documents, e.g. `{ orgs }` or `{ items, nextCursor }`. `204` answers resolve
   to `undefined`; `exportCartCsv` resolves to CSV text.
 - Also available: `startDeviceLogin`, `pollDeviceToken`, `waitForDeviceToken`, `me`, `logout`,
-  `getSettings`, `putSettings`, `publicCatalog`, `config`, `sendPush`, `getPushJob`, and `raw`/`request`
-  for anything else.
+  `getSettings`, `putSettings`, `publicCatalog`, `config`, `sendPush`, `getPushJob`,
+  `postTelemetryEvents`, and `raw`/`request` for anything else.
 - Failures throw `FabplaneApiError` with `status`, `code` (the API's `error` field), `message`, `body`.
 - Images: `createInventoryItem(orgId, input, [{ data, contentType, filename }])` sends multipart;
   `data` may be a `Uint8Array`, `ArrayBuffer` or `Blob`.

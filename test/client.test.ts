@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { FabplaneApiError, FabplaneClient, meUser } from "../src/index.js";
 
-type Call = { url: string; method: string; headers: Record<string, string>; body: unknown; rawBody: unknown };
+type Call = { url: string; method: string; headers: Record<string, string>; body: unknown; rawBody: unknown; signal?: AbortSignal };
 
 function recorder(respond: (call: Call) => Response = () => json({})) {
   const calls: Call[] = [];
@@ -10,7 +10,7 @@ function recorder(respond: (call: Call) => Response = () => json({})) {
     const headers = Object.fromEntries(Object.entries((init.headers as Record<string, string>) ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
     let body: unknown = undefined;
     if (typeof init.body === "string") body = headers["content-type"]?.includes("json") ? JSON.parse(init.body) : init.body;
-    const call = { url: input, method: init.method ?? "GET", headers, body, rawBody: init.body };
+    const call = { url: input, method: init.method ?? "GET", headers, body, rawBody: init.body, ...(init.signal ? { signal: init.signal } : {}) };
     calls.push(call);
     return respond(call);
   };
@@ -91,6 +91,32 @@ const cases: Array<[string, (c: FabplaneClient) => Promise<unknown>, string, str
   ["config", (c) => c.config(), "GET", "/v1/config"],
   ["sendPush", (c) => c.sendPush([{ to: "tok", title: "t", body: "b" }]), "POST", "/v1/private/push", { messages: [{ to: "tok", title: "t", body: "b" }] }],
   ["getPushJob", (c) => c.getPushJob("j1"), "GET", "/v1/private/push/j1"],
+  [
+    "postTelemetryEvents",
+    (c) =>
+      c.postTelemetryEvents([
+        {
+          uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          event: "app.active",
+          timestamp: "2026-01-15T12:00:00.000Z",
+          installId: "a".repeat(64),
+          properties: { appVersion: "0.4.15", os: "linux", authMode: "local" },
+        },
+      ]),
+    "POST",
+    "/v1/telemetry/events",
+    {
+      events: [
+        {
+          uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          event: "app.active",
+          timestamp: "2026-01-15T12:00:00.000Z",
+          installId: "a".repeat(64),
+          properties: { appVersion: "0.4.15", os: "linux", authMode: "local" },
+        },
+      ],
+    },
+  ],
 ];
 
 describe("FabplaneClient request shapes", () => {
@@ -109,7 +135,7 @@ describe("FabplaneClient request shapes", () => {
       const call = calls[0]!;
       assert.equal(call.method, method);
       assert.equal(call.url, `https://api.example.test${path}`);
-      const anonymous = ["publicCatalog", "config", "startBotConnect", "pollBotConnect"].includes(name);
+      const anonymous = ["publicCatalog", "config", "startBotConnect", "pollBotConnect", "postTelemetryEvents"].includes(name);
       assert.equal(call.headers["authorization"], anonymous ? undefined : "Bearer fpk_abc");
       if (body !== undefined) assert.deepEqual(call.body, body);
     });
@@ -117,6 +143,25 @@ describe("FabplaneClient request shapes", () => {
 
   it("covers every documented operation plus the pre-contract endpoints", () => {
     assert.ok(cases.length >= 55 + 8);
+  });
+
+  it("postTelemetryEvents forwards AbortSignal", async () => {
+    const { calls, fetch } = recorder(() => json({ accepted: 1 }, 202));
+    const signal = AbortSignal.timeout(5_000);
+    await new FabplaneClient({ origin: "https://api.example.test", token: "fpk_abc", fetch }).postTelemetryEvents(
+      [
+        {
+          uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          event: "app_open",
+          timestamp: "2026-01-15T12:00:00.000Z",
+          installId: "b".repeat(64),
+          properties: { appVersion: "0.4.15", os: "linux", authMode: "fabplane" },
+        },
+      ],
+      { signal },
+    );
+    assert.equal(calls[0]!.signal, signal);
+    assert.equal(calls[0]!.headers["authorization"], undefined);
   });
 });
 
