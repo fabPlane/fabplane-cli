@@ -374,3 +374,28 @@ export type BotConnectRequest = {
 };
 
 export type CreateBotInput = { name: string; role?: Role; agentKind?: BotAgentKind | string };
+
+/** Names accepted by `POST /v1/telemetry/events`. */
+export type TelemetryEventName = "app.active" | "app_open" | "project_created" | "ai_run" | "export";
+
+export type TelemetryEventProperties = {
+  appVersion: string;
+  os: "darwin" | "linux" | "win32" | "other";
+  authMode: "local" | "fabplane";
+  arch?: string;
+  draft?: boolean;
+  agentId?: string;
+  exportTool?: string;
+};
+
+/** One product-analytics event. Identifiers are SHA-256 hex, never the raw UUID. */
+export type TelemetryEvent = {
+  uuid: string;
+  event: TelemetryEventName;
+  timestamp: string;
+  installId: string;
+  properties: TelemetryEventProperties;
+  accountId?: string;
+};
+
+export type TelemetryEventsResponse = { accepted: number };
